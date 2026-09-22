@@ -59,7 +59,7 @@ isBimera <- function(sq, parents, allowOneOff=FALSE, minOneOffParentDistance=4, 
 #' @param unqs (Required). A \code{\link{uniques-vector}} or any object that can be coerced
 #'  into one with \code{\link{getUniques}}.
 #'   
-#' @param minFoldParentOverAbundance (Optional). A \code{numeric(1)}. Default is 1.
+#' @param minFoldParentOverAbundance (Optional). A \code{numeric(1)}. Default is 2.
 #'   Only sequences greater than this-fold more abundant than a sequence can be its 
 #'   "parents".
 #'   
@@ -99,10 +99,10 @@ isBimera <- function(sq, parents, allowOneOff=FALSE, minOneOffParentDistance=4, 
 #' @examples
 #' derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
 #' dada1 <- dada(derep1, err=tperr1, errorEstimationFunction=loessErrfun, selfConsist=TRUE)
-#' isBimeraDenovo(dada1)
-#' isBimeraDenovo(dada1$denoised, minFoldParentOverAbundance = 2, allowOneOff=TRUE)
+#' is.bim <- isBimeraDenovo(dada1)
+#' is.bim2 <- isBimeraDenovo(dada1$denoised, minFoldParentOverAbundance = 2, allowOneOff=TRUE)
 #' 
-isBimeraDenovo <- function(unqs, minFoldParentOverAbundance = 1, minParentAbundance = 8, allowOneOff=FALSE, minOneOffParentDistance=4, maxShift=16, multithread=FALSE, verbose=FALSE) {
+isBimeraDenovo <- function(unqs, minFoldParentOverAbundance = 2, minParentAbundance = 8, allowOneOff=FALSE, minOneOffParentDistance=4, maxShift=16, multithread=FALSE, verbose=FALSE) {
   if(any(duplicated(getSequences(unqs)))) message("Duplicate sequences detected.")
   unqs.int <- getUniques(unqs, silence=TRUE) # Internal, keep input unqs for proper return value when duplications
   abunds <- unname(unqs.int)
@@ -176,7 +176,7 @@ isBimeraDenovo <- function(unqs, minFoldParentOverAbundance = 1, minParentAbunda
 #'   of this parameter is to lower the threshold at which sequences found in few samples are
 #'   flagged as bimeras.
 #'   
-#' @param minFoldParentOverAbundance (Optional). Default is 1.
+#' @param minFoldParentOverAbundance (Optional). Default is 1.5.
 #'   Only sequences greater than this-fold more abundant than a sequence can be its 
 #'   "parents". Evaluated on a per-sample basis.
 #'   
@@ -217,7 +217,7 @@ isBimeraDenovo <- function(unqs, minFoldParentOverAbundance = 1, minParentAbunda
 #' isBimeraDenovoTable(seqtab)
 #' isBimeraDenovoTable(seqtab, allowOneOff=TRUE, minSampleFraction=0.5)
 #' 
-isBimeraDenovoTable <- function(seqtab, minSampleFraction=0.9, ignoreNNegatives=1, minFoldParentOverAbundance = 1, minParentAbundance = 2, allowOneOff=FALSE, minOneOffParentDistance=4, maxShift=16, multithread=FALSE, verbose=FALSE) {
+isBimeraDenovoTable <- function(seqtab, minSampleFraction=0.9, ignoreNNegatives=1, minFoldParentOverAbundance = 1.5, minParentAbundance = 2, allowOneOff=FALSE, minOneOffParentDistance=4, maxShift=16, multithread=FALSE, verbose=FALSE) {
   sqs <- colnames(seqtab)
   if(!(is.matrix(seqtab) && is.integer(seqtab) &&  !is.null(sqs))) {
     stop("Input must be a valid sequence table.")
@@ -270,9 +270,8 @@ isBimeraDenovoTable <- function(seqtab, minSampleFraction=0.9, ignoreNNegatives=
 #'   If "per-sample": The samples in a sequence table are independently checked for bimeras,
 #'      and sequence variants are removed (zeroed-out) from samples independently (\code{\link{isBimeraDenovo}}).
 #'
-#' @param tableMethod (DEPRECATED).
-#'
 #' @param ... (Optional). Arguments to be passed to \code{\link{isBimeraDenovo}} or \code{\link{isBimeraDenovoTable}}.
+#'   The documentation of those methods detail the additional algorithmic parameters that can be adjusted.
 #'   
 #' @param verbose (Optional). Default FALSE. 
 #'  Print verbose text output.
@@ -284,19 +283,20 @@ isBimeraDenovoTable <- function(seqtab, minSampleFraction=0.9, ignoreNNegatives=
 #' 
 #' @export
 #' 
+#' @importFrom methods is
+#' 
 #' @examples
 #' derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
 #' dada1 <- dada(derep1, err=tperr1, errorEstimationFunction=loessErrfun, selfConsist=TRUE)
 #' out.nobim <- removeBimeraDenovo(dada1)
-#' out.nobim <- removeBimeraDenovo(dada1$clustering, method="pooled", minFoldParentOverAbundance = 2, allowOneOff=FALSE)
+#' out.nobim <- removeBimeraDenovo(dada1$clustering, method="pooled", minFoldParentOverAbundance = 2)
 #' 
-removeBimeraDenovo <- function(unqs, method = "consensus", tableMethod=NULL, ..., verbose=FALSE) {
-  if(class(unqs)!="list") {
-    unqs <- list(unqs)
-  }
-  if(!is.null(tableMethod)) {
-    warning("DEPRECATED: The tableMethod argument has been replaced by the method argument. Please update your code.")
-    method <- tableMethod
+removeBimeraDenovo <- function(unqs, method = "consensus", ..., verbose=FALSE) {
+  if(is(unqs, "dada") || is(unqs, "derep") || is(unqs, "data.frame")) { unqs <- list(unqs) }
+  if(!is.list(unqs)) { unqs <- list(unqs) } 
+  # Should consider removing the list-wise functionality here. Adds unnecessary complexity.
+  if("tableMethod" %in% names(list(...))) {
+    stop("DEFUNCT: The tableMethod argument has been replaced by the method argument. Please update your code.")
   }
   outs <- list()
   for(i in seq_along(unqs)) {
@@ -304,19 +304,16 @@ removeBimeraDenovo <- function(unqs, method = "consensus", tableMethod=NULL, ...
     if(is.integer(unqs[[i]]) && length(names(unqs[[i]])) != 0 && !any(is.na(names(unqs[[i]])))) { # Named integer vector already
       bim <- isBimeraDenovo(unqs[[i]], ..., verbose=verbose)
       outs[[i]] <- unqs[[i]][!bim]
-    } else if(class(unqs[[i]]) == "dada") {  # dada return 
+    } else if(is(unqs[[i]], "dada")) {  # dada return 
       bim <- isBimeraDenovo(unqs[[i]], ..., verbose=verbose)
       outs[[i]] <- unqs[[i]]$denoised[!bim]
-    } else if(class(unqs[[i]]) == "derep") {
+    } else if(is(unqs[[i]], "derep")) {
       bim <- isBimeraDenovo(unqs[[i]], ..., verbose=verbose)
       outs[[i]] <- unqs[[i]]$uniques[!bim]
     } else if(is.data.frame(unqs[[i]]) && all(c("sequence", "abundance") %in% colnames(unqs[[i]]))) {
       bim <- isBimeraDenovo(unqs[[i]], ..., verbose=verbose)
       outs[[i]] <- unqs[[i]][!bim,]
-    } else if(class(unqs[[i]]) == "matrix" && !any(is.na(colnames(unqs[[i]])))) { # Tabled sequences
-      if(missing(method) && i==1) {
-        message("As of the 1.4 release, the default method changed to consensus (from pooled).")
-      }
+    } else if(is.matrix(unqs[[i]]) && !any(is.na(colnames(unqs[[i]])))) { # Tabled sequences
       if(method == "pooled") {
         bim <- isBimeraDenovo(unqs[[i]], ..., verbose=verbose)
       } else if(method == "consensus") {
@@ -330,7 +327,7 @@ removeBimeraDenovo <- function(unqs, method = "consensus", tableMethod=NULL, ...
       	outs[[i]] <- unqs[[i]][,!bim,drop=FALSE]
       } else if (method %in% c("per-sample")) {
       	outs[[i]] <- unqs[[i]]
-      	outs[[i]][which(bim, arr.ind=T)] <- 0
+      	outs[[i]][which(bim, arr.ind=TRUE)] <- 0
       	cbim <- colSums(outs[[i]])==0
       	outs[[i]] <- outs[[i]][,!cbim,drop=FALSE]
       }
@@ -377,8 +374,8 @@ removeBimeraDenovo <- function(unqs, method = "consensus", tableMethod=NULL, ...
 #' @examples
 #' derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
 #' dada1 <- dada(derep1, err=tperr1, errorEstimationFunction=loessErrfun, selfConsist=TRUE)
-#' isShiftDenovo(dada1)
-#' isShiftDenovo(dada1$denoised, minOverlap=50, verbose=TRUE)
+#' is.shift <- isShiftDenovo(dada1)
+#' is.shift <- isShiftDenovo(dada1$denoised, minOverlap=50, verbose=TRUE)
 #' 
 isShiftDenovo <- function(unqs, minOverlap = 20, flagSubseqs=FALSE, verbose=FALSE) {
   unqs.int <- getUniques(unqs, silence=TRUE) # Internal, keep input unqs for proper return value when duplications

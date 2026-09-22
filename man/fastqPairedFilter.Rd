@@ -4,12 +4,31 @@
 \alias{fastqPairedFilter}
 \title{Filters and trims paired forward and reverse fastq files.}
 \usage{
-fastqPairedFilter(fn, fout, maxN = c(0, 0), truncQ = c(2, 2),
-  truncLen = c(0, 0), maxLen = c(Inf, Inf), minLen = c(20, 20),
-  trimLeft = c(0, 0), minQ = c(0, 0), maxEE = c(Inf, Inf),
-  rm.phix = c(TRUE, TRUE), matchIDs = FALSE, primer.fwd = NULL,
-  id.sep = "\\\\s", id.field = NULL, n = 1e+06, OMP = TRUE,
-  compress = TRUE, verbose = FALSE, ...)
+fastqPairedFilter(
+  fn,
+  fout,
+  maxN = c(0, 0),
+  truncQ = c(2, 2),
+  truncLen = c(0, 0),
+  maxLen = c(Inf, Inf),
+  minLen = c(20, 20),
+  trimLeft = c(0, 0),
+  trimRight = c(0, 0),
+  minQ = c(0, 0),
+  maxEE = c(Inf, Inf),
+  rm.phix = c(TRUE, TRUE),
+  rm.lowcomplex = c(0, 0),
+  matchIDs = FALSE,
+  orient.fwd = NULL,
+  id.sep = "\\\\s",
+  id.field = NULL,
+  n = 1e+06,
+  OMP = TRUE,
+  qualityType = "Auto",
+  compress = TRUE,
+  verbose = FALSE,
+  ...
+)
 }
 \arguments{
 \item{fn}{(Required). A \code{character(2)} naming the paths to the (forward,reverse) fastq files.}
@@ -43,6 +62,10 @@ Remove reads with length less than minLen. minLen is enforced after all other tr
 The number of nucleotides to remove from the start of each read. If both \code{truncLen} and 
 \code{trimLeft} are provided, filtered reads will have length \code{truncLen-trimLeft}.}
 
+\item{trimRight}{(Optional). Default 0.
+The number of nucleotides to remove from the end of each read. If both \code{truncLen} and 
+\code{trimRight} are provided, truncation will be performed after \code{trimRight} is enforced.}
+
 \item{minQ}{(Optional). Default 0.
 After truncation, reads contain a quality score below minQ will be discarded.}
 
@@ -54,6 +77,12 @@ Expected errors are calculated from the nominal definition of the quality score:
 If TRUE, discard reads that match against the phiX genome, as determined by 
 \code{\link{isPhiX}}.}
 
+\item{rm.lowcomplex}{(Optional). Default 0.
+If greater than 0, reads with an effective number of kmers less than this value will be removed.
+The effective number of kmers is determined by \code{\link{seqComplexity}} using a Shannon information
+approximation. The default kmer-size is 2, and therefore perfectly random sequences will approach an
+effective kmer number of 16 = 4 (nucleotides) ^ 2 (kmer size).}
+
 \item{matchIDs}{(Optional). Default FALSE.
 Whether to enforce matching between the id-line sequence identifiers of the forward and reverse fastq files.
   If TRUE, only paired reads that share id fields (see below) are output.
@@ -61,11 +90,14 @@ Whether to enforce matching between the id-line sequence identifiers of the forw
 Note: \code{matchIDs=FALSE} essentially assumes matching order between forward and reverse reads. If that
   matched order is not present future processing steps may break (in particular \code{\link{mergePairs}}).}
 
-\item{primer.fwd}{(Optional). Default NULL.
- A character string defining the forward primer. Only allows unambiguous nucleotides. The primer will be
- compared to the first len(primer.fwd) nucleotides at the start of the forward and reverse reads. If there is
- not an exact match, the paired read is filtered out. If detected on the reverse read, the fwd/rev reads
- are swapped.
+\item{orient.fwd}{(Optional). Default NULL.
+ A character string present at the start of valid reads. Only allows unambiguous nucleotides. 
+ This string is compared to the start of the forward and reverse reads. 
+ If it exactly matches the start of the forward read, the read is kept.
+ If it exactly matches the start of the reverse read, the fwd/rev reads are swapped.
+ Otherwise the read if filtered out.
+ The primary use of this parameter is to unify the orientation of amplicon sequencing libraries that
+ are a mixture of forward and reverse orientations, and that include the forward primer on the reads.
 
 \strong{ID MATCHING ARGUMENTS}   
 
@@ -82,13 +114,19 @@ The field of the id-line containing the sequence identifier.
 If NULL (the default) and matchIDs is TRUE, the function attempts to automatically detect
   the sequence identifier field under the assumption of Illumina formatted output.}
 
-\item{n}{(Optional). The number of records (reads) to read in and filter at any one time. 
-This controls the peak memory requirement so that very large fastq files are supported. 
-Default is \code{1e6}, one-million reads. See \code{\link{FastqStreamer}} for details.}
+\item{n}{(Optional). The number of records (reads) to read in and filter at any one time.
+This controls the peak memory requirement so that very large fastq files are supported.
+Default is \code{1e6}, one-million reads. See \code{\link[ShortRead]{FastqStreamer}} for details.}
 
 \item{OMP}{(Optional). Default TRUE.
-Whether or not to use OMP multithreading when calling \code{\link{FastqStreamer}}. Set this to FALSE if
-calling this function within a parallelized chunk of code (eg. within \code{\link[parallel]{mclapply}}).}
+Whether or not to use OMP multithreading when calling \code{\link[ShortRead]{FastqStreamer}}. 
+Set this to FALSE if calling this function within a parallelized chunk of code 
+(eg. within \code{\link[parallel]{mclapply}}).}
+
+\item{qualityType}{(Optional). \code{character(1)}.
+The quality encoding of the fastq file(s). "Auto" (the default) means to
+attempt to auto-detect the encoding. This parameter is passed on to
+\code{\link[ShortRead]{readFastq}}; see information there for details.}
 
 \item{compress}{(Optional). Default TRUE.
 Whether the output fastq files should be gzip compressed.}
@@ -96,7 +134,7 @@ Whether the output fastq files should be gzip compressed.}
 \item{verbose}{(Optional). Default FALSE.
 Whether to output status messages.}
 
-\item{...}{(Optional). Arguments passed on to \code{\link{isPhiX}}.}
+\item{...}{(Optional). Arguments passed on to \code{\link{isPhiX}} or \code{\link{seqComplexity}}.}
 }
 \value{
 \code{integer(2)}.
@@ -117,7 +155,7 @@ filtFastqF <- tempfile(fileext=".fastq.gz")
 filtFastqR <- tempfile(fileext=".fastq.gz")
 fastqPairedFilter(c(testFastqF, testFastqR), c(filtFastqF, filtFastqR), maxN=0, maxEE=2)
 fastqPairedFilter(c(testFastqF, testFastqR), c(filtFastqF, filtFastqR), trimLeft=c(10, 20),
-                    truncLen=c(240, 200), maxEE=2, rm.phix=TRUE, verbose=TRUE)
+                    truncLen=c(240, 200), maxEE=2, rm.phix=TRUE, rm.lowcomplex=5, kmerSize=2)
 
 }
 \seealso{

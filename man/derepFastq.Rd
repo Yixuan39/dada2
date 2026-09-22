@@ -4,12 +4,12 @@
 \alias{derepFastq}
 \title{Read in and dereplicate a fastq file.}
 \usage{
-derepFastq(fls, n = 1e+06, verbose = FALSE)
+derepFastq(fls, n = 1e+06, verbose = FALSE, qualityType = "Auto")
 }
 \arguments{
 \item{fls}{(Required). \code{character}.
-The file path(s) to the fastq or fastq.gz file(s).
-Actually, any file format supported by \code{\link[ShortRead]{FastqStreamer}}.}
+The file path(s) to the fastq file(s), or a directory containing fastq file(s).
+Compressed file formats such as .fastq.gz and .fastq.bz2 are supported.}
 
 \item{n}{(Optional). \code{numeric(1)}.
 The maximum number of records (reads) to parse and dereplicate
@@ -22,6 +22,13 @@ which is passed on.}
 \item{verbose}{(Optional). Default FALSE.
 If TRUE, throw standard R \code{\link{message}}s 
 on the intermittent and final status of the dereplication.}
+
+\item{qualityType}{(Optional). \code{character(1)}.
+The quality encoding of the fastq file(s). "Auto" (the default) means to 
+attempt to auto-detect the encoding. This may fail for PacBio files with
+uniformly high quality scores, in which case use "FastqQuality". This
+parameter is passed on to \code{\link[ShortRead]{readFastq}}; see
+information there for details.}
 }
 \value{
 A \code{\link{derep-class}} object or list of such objects.
@@ -35,7 +42,7 @@ while also controlling peak memory requirement to support large files.
 # Test that chunk-size, `n`, does not affect the result.
 testFastq = system.file("extdata", "sam1F.fastq.gz", package="dada2")
 derep1 = derepFastq(testFastq, verbose = TRUE)
-derep1.35 = derepFastq(testFastq, 35, TRUE)
+derep1.35 = derepFastq(testFastq, n = 35, verbose = TRUE)
 all.equal(getUniques(derep1), getUniques(derep1.35)[names(getUniques(derep1))])
 
 }

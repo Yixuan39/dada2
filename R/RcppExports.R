@@ -5,8 +5,8 @@
 #' @importFrom Rcpp evalCpp
 NULL
 
-dada_uniques <- function(seqs, abundances, err, quals, score, gap, use_kmers, kdist_cutoff, band_size, omegaA, max_clust, min_fold, min_hamming, use_quals, final_consensus, vectorized_alignment, homo_gap, multithread, verbose) {
-    .Call('_dada2_dada_uniques', PACKAGE = 'dada2', seqs, abundances, err, quals, score, gap, use_kmers, kdist_cutoff, band_size, omegaA, max_clust, min_fold, min_hamming, use_quals, final_consensus, vectorized_alignment, homo_gap, multithread, verbose)
+dada_uniques <- function(seqs, abundances, priors, err, quals, match, mismatch, gap, use_kmers, kdist_cutoff, band_size, omegaA, omegaP, omegaC, detect_singletons, max_clust, min_fold, min_hamming, min_abund, use_quals, final_consensus, vectorized_alignment, homo_gap, multithread, verbose, SSE, gapless, greedy) {
+    .Call('_dada2_dada_uniques', PACKAGE = 'dada2', seqs, abundances, priors, err, quals, match, mismatch, gap, use_kmers, kdist_cutoff, band_size, omegaA, omegaP, omegaC, detect_singletons, max_clust, min_fold, min_hamming, min_abund, use_quals, final_consensus, vectorized_alignment, homo_gap, multithread, verbose, SSE, gapless, greedy)
 }
 
 C_is_bimera <- function(sq, pars, allow_one_off, min_one_off_par_dist, match, mismatch, gap_p, max_shift) {
@@ -33,39 +33,20 @@ C_isACGT <- function(seqs) {
     .Call('_dada2_C_isACGT', PACKAGE = 'dada2', seqs)
 }
 
-#' Generate the kmer-distance and the alignment distance from the
-#'   given set of sequences. 
-#'
-#' @param seqs (Required). Character.
-#'  A vector containing all unique sequences in the data set.
-#'  Only A/C/G/T allowed.
-#'  
-#' @param kmer_size (Required). A \code{numeric(1)}. The size of the kmer to test (eg. 5-mer).
-#' 
-#' @param score (Required). Numeric matrix (4x4).
-#' The score matrix used during the alignment. Coerced to integer.
-#'
-#' @param gap (Required). A \code{numeric(1)} giving the gap penalty for alignment. Coerced to integer.
-#'
-#' @param band (Required). A \code{numeric(1)} giving the band-size for the NW alignments.
-#'
-#' @param max_aligns (Required). A \code{numeric(1)} giving the (maximum) number of
-#' pairwise alignments to do.
-#'
-#' @return data.frame
-#'
-#' @examples
-#' derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
-#' kmerdf <- dada2:::evaluate_kmers(getSequences(derep1), 5, getDadaOpt("SCORE_MATRIX"),
-#'                                  getDadaOpt("GAP_PENALTY"), 16, 1000)
-#' plot(kmerdf$kmer, kmerdf$align)
-#' 
-evaluate_kmers <- function(seqs, kmer_size, score, gap, band, max_aligns) {
-    .Call('_dada2_evaluate_kmers', PACKAGE = 'dada2', seqs, kmer_size, score, gap, band, max_aligns)
+kmer_dist <- function(s1, s2, kmer_size) {
+    .Call('_dada2_kmer_dist', PACKAGE = 'dada2', s1, s2, kmer_size)
 }
 
-C_subpos <- function(s1, s2) {
-    .Call('_dada2_C_subpos', PACKAGE = 'dada2', s1, s2)
+kord_dist <- function(s1, s2, kmer_size, SSE) {
+    .Call('_dada2_kord_dist', PACKAGE = 'dada2', s1, s2, kmer_size, SSE)
+}
+
+kmer_matches <- function(s1, s2, kmer_size) {
+    .Call('_dada2_kmer_matches', PACKAGE = 'dada2', s1, s2, kmer_size)
+}
+
+kdist_matches <- function(s1, s2, kmer_size) {
+    .Call('_dada2_kdist_matches', PACKAGE = 'dada2', s1, s2, kmer_size)
 }
 
 C_matchRef <- function(seqs, ref, word_size, non_overlapping) {
@@ -78,10 +59,6 @@ C_matrixEE <- function(inp) {
 
 C_nwvec <- function(s1, s2, match, mismatch, gap_p, band, endsfree) {
     .Call('_dada2_C_nwvec', PACKAGE = 'dada2', s1, s2, match, mismatch, gap_p, band, endsfree)
-}
-
-C_assign_taxonomy <- function(seqs, rcs, refs, ref_to_genus, genusmat, try_rc, verbose) {
-    .Call('_dada2_C_assign_taxonomy', PACKAGE = 'dada2', seqs, rcs, refs, ref_to_genus, genusmat, try_rc, verbose)
 }
 
 C_assign_taxonomy2 <- function(seqs, rcs, refs, ref_to_genus, genusmat, try_rc, verbose) {

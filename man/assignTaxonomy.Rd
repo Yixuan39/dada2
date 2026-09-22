@@ -4,10 +4,16 @@
 \alias{assignTaxonomy}
 \title{Classifies sequences against reference training dataset.}
 \usage{
-assignTaxonomy(seqs, refFasta, minBoot = 50, tryRC = FALSE,
-  outputBootstraps = FALSE, taxLevels = c("Kingdom", "Phylum", "Class",
-  "Order", "Family", "Genus", "Species"), multithread = FALSE,
-  verbose = FALSE)
+assignTaxonomy(
+  seqs,
+  refFasta,
+  minBoot = 50,
+  tryRC = FALSE,
+  outputBootstraps = FALSE,
+  taxLevels = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"),
+  multithread = FALSE,
+  verbose = FALSE
+)
 }
 \arguments{
 \item{seqs}{(Required). A character vector of the sequences to be assigned, or an object 
@@ -56,15 +62,15 @@ A character matrix of assigned taxonomies exceeding the minBoot level of
   and the bootstrap values (named "boot") will be returned.
 }
 \description{
-assignTaxonomy implements the RDP Naive Bayesian Classifier algorithm described in
+assignTaxonomy implements the Naive Bayesian Classifier algorithm described in
 Wang et al. Applied and Environmental Microbiology 2007, with kmer size 8 and 100 bootstrap
 replicates. Properly formatted reference files for several popular taxonomic databases
 are available \url{http://benjjneb.github.io/dada2/training.html}
 }
 \examples{
-\dontrun{
- taxa <- assignTaxonomy(dadaF, "gg_13_8_train_set_97.fa.gz")
- taxa <- assignTaxonomy(dadaF, "rdp_train_set_14.fa.gz", minBoot=80)
-}
+seqs <- getSequences(system.file("extdata", "example_seqs.fa", package="dada2"))
+training_fasta <- system.file("extdata", "example_train_set.fa.gz", package="dada2")
+taxa <- assignTaxonomy(seqs, training_fasta)
+taxa80 <- assignTaxonomy(seqs, training_fasta, minBoot=80, multithread=2)
 
 }

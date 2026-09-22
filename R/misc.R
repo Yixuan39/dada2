@@ -19,31 +19,35 @@
 #' @return \code{integer}.
 #'  An integer vector named by unique sequence and valued by abundance.
 #' 
+#' @importFrom methods is
+#' 
 #' @export
 #' 
 #' @examples
 #' derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
 #' dada1 <- dada(derep1, err=tperr1)
-#' getUniques(derep1)
-#' getUniques(dada1)
-#' getUniques(dada1$clustering)
+#' getUniques(derep1)[1:3]
+#' getUniques(dada1)[1:3]
+#' getUniques(dada1$clustering)[1:3]
 #' 
 getUniques <- function(object, collapse=TRUE, silence=FALSE) {
-  if(is.integer(object) && length(names(object)) != 0 && !any(is.na(names(object)))) { # Named integer vector already
+  if(is.character(object) && length(object)==1 && file.exists(object)) {
+    unqs <- derepFastq(object)$uniques
+  } else if(is.vector(object, "integer") && length(names(object)) != 0 && !any(is.na(names(object)))) { # Named integer vector already
     unqs <- object
-  } else if(class(object) == "dada") {  # dada return 
+  } else if(is(object, "dada")) {  # dada return 
     unqs <- object$denoised
-  } else if(class(object) == "derep") {
+  } else if(is(object, "derep")) {
     unqs <- object$uniques
   } else if(is.data.frame(object) && all(c("sequence", "abundance") %in% colnames(object))) {
     unqs <- as.integer(object$abundance)
     names(unqs) <- object$sequence
-  } else if(class(object) == "matrix" && !any(is.na(colnames(object)))) { # Tabled sequences
+  } else if(is.matrix(object) && is.numeric(object) && !any(is.na(colnames(object)))) { # Tabled sequences
     unqs <- as.integer(colSums(object))
     names(unqs) <- colnames(object)
   }
   else {
-    stop("Unrecognized format: Requires named integer vector, dada-class, derep-class, sequence matrix, or a data.frame with $sequence and $abundance columns.")
+    stop("Unrecognized format: Requires named integer vector, fastq filename, dada-class, derep-class, sequence matrix, or a data.frame with $sequence and $abundance columns.")
   }
   #### ENFORCE UNIQUENESS HERE!!!
   if(any(duplicated(names(unqs)))) {
@@ -60,17 +64,18 @@ getUniques <- function(object, collapse=TRUE, silence=FALSE) {
 ################################################################################
 #' Get vector of sequences from input object.
 #' 
-#' This function extracts the unique sequences from several different data objects, including
+#' This function extracts the sequences from several different data objects, including
 #'  including \code{\link{dada-class}} and \code{\link{derep-class}} objects, as well as 
 #'  \code{data.frame} objects that have both $sequence and $abundance columns. This function 
 #'  wraps the \code{\link{getUniques}} function, but return only the names (i.e. the sequences).
-#'  Can also be provided the file path to a fasta file. 
+#'  Can also be provided the file path to a fasta or fastq file, a taxonomy table, or a
+#'  DNAStringSet object. Sequences are coerced to upper-case characters.
 #' 
 #' @param object (Required). The object from which to extract the sequences.
 #' 
 #' @param collapse (Optional). Default FALSE.
 #'  Should duplicate sequences detected in \code{object} be collapsed together, thereby
-#'   imposing uniqueness on non-unique input.
+#'  imposing uniqueness on non-unique input.
 #'  
 #' @param silence (Optional). Default TRUE.
 #'  Suppress reporting of the detection and merger of duplicated input sequences.
@@ -78,7 +83,9 @@ getUniques <- function(object, collapse=TRUE, silence=FALSE) {
 #' @return \code{character}. A character vector of the sequences.
 #' 
 #' @importFrom methods is
+#' @importFrom methods as
 #' @importFrom ShortRead readFasta
+#' @importFrom ShortRead readFastq
 #' @importFrom ShortRead sread
 #' @importFrom ShortRead id
 #' 
@@ -87,25 +94,37 @@ getUniques <- function(object, collapse=TRUE, silence=FALSE) {
 #' @examples
 #' derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
 #' dada1 <- dada(derep1, err=tperr1)
-#' getSequences(derep1)
-#' getSequences(dada1)
-#' getSequences(dada1$clustering)
+#' getSequences(derep1)[1:5]
+#' getSequences(dada1)[1:5]
+#' getSequences(dada1$clustering)[1:5]
 #' 
 getSequences <- function(object, collapse=FALSE, silence=TRUE) {
   if(is(object, "character")) {
     if(length(object)==1 && file.exists(object)) {
-      sr <- readFasta(object)
-      seqs <- as.character(sread(sr))
+      sr <- tryCatch(readFasta(object), error=function(err) { readFastq(object) })
+      seqs <- toupper(as.character(sread(sr)))
       names(seqs) <- id(sr)
-      return(seqs)
+      rval <- seqs
     } else if(collapse) {
       if(any(duplicated(object)) && !silence) message("Duplicate sequences detected and merged.")
-      return(unique(object))
+      rval <- unique(object)
     } else {
-      return(object)
+      rval <- object
     }
+  } else if(is(object, "DNAStringSet")) {
+    rval <- as.character(object)
+  } else if(is.matrix(object) && is.character(object) && !any(is.na(rownames(object)))) { # Taxonomy table
+    seqs <- rownames(object)
+    if(any(duplicated(seqs))) {
+      if(collapse) seqs <- unique(seqs)
+      if(collapse && !silence) message("Duplicate sequences detected and merged.")
+      if(!collapse && !silence) message("Duplicate sequences detected.")
+    }
+    rval <- seqs
+  } else {
+    rval <- names(getUniques(object, collapse=collapse, silence=silence))
   }
-  return(names(getUniques(object, collapse=collapse, silence=silence)))
+  return(toupper(rval))
 }
 
 getAbund <- function(object) {
@@ -220,17 +239,43 @@ strdiff <- function(s1, s2) {
   data.frame(pos=dd,nt0=xx[dd],nt1=yy[dd])
 }
 
+################################################################################
+#' Reverse complement DNA sequences.
+#' 
+#' This function reverse complements DNA sequence(s) provided.
+#' This function is nothing more than a concisely-named convenience wrapper for 
+#' \code{\link[Biostrings]{reverseComplement}} that handles the \code{character} vector
+#' DNA sequences generated in the the dada2 package.
+#' 
+#' @param sq (Required). \code{character}. The DNA sequence(s) to reverse-complement.
+#'  \code{\link[Biostrings]{DNAString}}, or \code{\link[Biostrings]{DNAStringSet}} formats
+#'  are also accepted.
+#'  
+#' @return \code{character}. The reverse-complemented DNA sequence(s).
+#' 
+#' @seealso 
+#'  \code{\link[Biostrings]{reverseComplement}}
+#'  
 #' @importFrom Biostrings DNAString
 #' @importFrom Biostrings DNAStringSet
 #' @importFrom Biostrings reverseComplement
 #' @importFrom methods as
-rc <- function(sqs) {
-  if(length(sqs) < 1) {
+#' 
+#' @export
+#' 
+#' @examples
+#' R1492 <- "RGYTACCTTGTTACGACTT"
+#' rc(R1492)
+#' sqs <- getSequences(system.file("extdata", "example_seqs.fa", package="dada2"))
+#' rc(sqs)
+#' 
+rc <- function(sq) {
+  if(length(sq) < 1) {
     return(character(0))
-  } else if(length(sqs) == 1) {
-    as(reverseComplement(DNAString(sqs)), "character")
+  } else if(length(sq) == 1) {
+    as(reverseComplement(DNAString(sq)), "character")
   } else {
-    as(reverseComplement(DNAStringSet(sqs)), "character")
+    as(reverseComplement(DNAStringSet(sq)), "character")
   }
 }
 
@@ -249,3 +294,51 @@ is.list.of <- function(x, ctype) {
   if(!is.list(x)) return(FALSE)
   else return(all(sapply(x, is, ctype)))
 }
+
+#' @importFrom utils write.table
+#' @keywords internal
+seqtab_to_qiime <- function(st, fout) {
+  st <- t(st) # QIIME has OTUs as rows
+  col.names <- colnames(st)
+  col.names[[1]] <- paste0("#OTU ID\t", col.names[[1]])
+  write.table(st, fout, sep="\t",
+              row.names=TRUE, col.names=col.names, quote=FALSE)
+}
+
+#' @importFrom utils write.table
+#' @keywords internal
+seqtab_to_mothur <- function(st, fout) {
+  # mothur has OTUs as columns, and a couple required columns
+  df.shared <- data.frame(label=rep("DADA2", nrow(st)), Group=rownames(st), numOtus=ncol(st))
+  df.shared <- cbind(df.shared, st)
+  write.table(df.shared, fout, row.names=FALSE, col.names=TRUE, quote=FALSE)
+}
+
+#' @importFrom utils write.table
+#' @keywords internal
+samdf_to_qiime2 <- function(df, fout) {
+  col.names <- colnames(df)
+  col.names[[1]] <- paste0("#SampleID\t", col.names[[1]])
+  write.table(df, fout, sep="\t",
+              row.names=TRUE, col.names=col.names, quote=FALSE)
+}
+
+#' @keywords internal
+bs1ham <- function(dd, ham=1) {
+  is.1ham <- which(dd$clustering$birth_ham %in% ham)
+  dd$birth_subs[dd$birth_subs$clust %in% is.1ham,]
+}
+
+#' @keywords internal
+getSRR <- Vectorize(function(run, outdir="sra", verbose=TRUE, ...) {
+  if(!grepl("^SRR[0-9]{6,}$", run)) stop("Requires SRA Run accessions in format: SRR1234567")
+  if(!dir.exists(outdir)) dir.create(outdir)
+  loc <- paste0("ftp-trace.ncbi.nlm.nih.gov/sra/sra-instant/reads/ByRun/sra/SRR/",
+                substr(run, 1, 6), "/", run, "/")
+  loc <- paste0(loc, run, ".sra")
+  download.file(loc, file.path(outdir, paste0(run, ".sra")), ...)
+  if(verbose) cat(run, "\n")
+})
+
+
+

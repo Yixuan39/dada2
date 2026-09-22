@@ -6,8 +6,8 @@
 #' while also controlling peak memory requirement to support large files.
 #'
 #' @param fls (Required). \code{character}.
-#'  The file path(s) to the fastq or fastq.gz file(s).
-#'  Actually, any file format supported by \code{\link[ShortRead]{FastqStreamer}}.
+#'  The file path(s) to the fastq file(s), or a directory containing fastq file(s).
+#'  Compressed file formats such as .fastq.gz and .fastq.bz2 are supported.
 #' 
 #' @param n (Optional). \code{numeric(1)}.
 #'  The maximum number of records (reads) to parse and dereplicate
@@ -16,6 +16,13 @@
 #'  Default is \code{1e6}, one-million reads.
 #'  See \code{\link[ShortRead]{FastqStreamer}} for details on this parameter,
 #'  which is passed on.
+#' 
+#' @param qualityType (Optional). \code{character(1)}.
+#'  The quality encoding of the fastq file(s). "Auto" (the default) means to 
+#'  attempt to auto-detect the encoding. This may fail for PacBio files with
+#'  uniformly high quality scores, in which case use "FastqQuality". This
+#'  parameter is passed on to \code{\link[ShortRead]{readFastq}}; see
+#'  information there for details.
 #' 
 #' @param verbose (Optional). Default FALSE.
 #'  If TRUE, throw standard R \code{\link{message}}s 
@@ -32,11 +39,13 @@
 #' # Test that chunk-size, `n`, does not affect the result.
 #' testFastq = system.file("extdata", "sam1F.fastq.gz", package="dada2")
 #' derep1 = derepFastq(testFastq, verbose = TRUE)
-#' derep1.35 = derepFastq(testFastq, 35, TRUE)
+#' derep1.35 = derepFastq(testFastq, n = 35, verbose = TRUE)
 #' all.equal(getUniques(derep1), getUniques(derep1.35)[names(getUniques(derep1))])
 #' 
-derepFastq <- function(fls, n = 1e6, verbose = FALSE){
-  if(!is.character(fls)) { stop("Filenames must be provided in character format.") }
+derepFastq <- function(fls, n = 1e6, verbose = FALSE, qualityType = "Auto") {
+  if(!is.character(fls)) { stop("File paths must be provided in character format.") }
+  if(length(fls)==1 && dir.exists(fls)) { fls <- parseFastqDirectory(fls) }
+  if(!all(file.exists(fls))) { stop("Not all provided files exist.") }
   rval <- list()
   for(i in seq_along(fls)) {
     fl <- fls[[i]]
@@ -45,21 +54,21 @@ derepFastq <- function(fls, n = 1e6, verbose = FALSE){
     }
     
     f <- FastqStreamer(fl, n = n)
-    suppressWarnings(fq <- yield(f))
+    suppressWarnings(fq <- yield(f, qualityType = qualityType))
     
-    out <- qtables2(fq, FALSE) ###ITS
+    out <- qtables2(fq) ###ITS
     
     derepCounts <- out$uniques
     derepQuals <- out$cum_quals
     derepMap <- out$map
-    while( length(suppressWarnings(fq <- yield(f))) ){
+    while( length(suppressWarnings(fq <- yield(f, qualityType = qualityType))) ){
       # A little loop protection
       newniques = alreadySeen = NULL
       # Dot represents one turn inside the chunking loop.
       if(verbose){
         message(".", appendLF = FALSE)
       }
-      out <- qtables2(fq, FALSE)
+      out <- qtables2(fq)
       # Augment quality matrices with NAs as needed to match ncol
       if(ncol(out$cum_quals) > ncol(derepQuals)) {
         derepQuals <- cbind(derepQuals, matrix(NA, nrow=nrow(derepQuals), ncol=(ncol(out$cum_quals)-ncol(derepQuals))))
@@ -98,9 +107,6 @@ derepFastq <- function(fls, n = 1e6, verbose = FALSE){
               " total sequences read.")
     }
     close(f)
-    if(sum(tabulate(nchar(names(derepCounts)))>0) > 1) {
-      cat("Not all sequences were the same length.\n")
-    }
     derepO <- list(uniques=derepCounts, quals=derepQuals, map=derepMap)
     derepO <- as(derepO, "derep")
     rval[[i]] <- derepO
@@ -128,6 +134,9 @@ derepFastq <- function(fls, n = 1e6, verbose = FALSE){
 #' @param qeff \code{logical(1)}.
 #'  Calculate average quality by first transforming to expected error rate.
 #' 
+#' @param handle.zerolen \code{logical(1)}.
+#' Default TRUE. If TRUE, gracefully excludes zero-length sequences.
+#' 
 #' @return List.
 #'  Matches format of derep-class object.
 #' 
@@ -138,7 +147,15 @@ derepFastq <- function(fls, n = 1e6, verbose = FALSE){
 #' 
 #' @keywords internal
 #' 
-qtables2 <- function(x, qeff = FALSE) {
+qtables2 <- function(x, qeff = FALSE, handle.zerolen=TRUE) {
+  nread <- length(x)
+  npos <- sum(width(x) > 0)
+  if(npos == 0) { stop("Only zero-length sequences detected during dereplication.") }
+  if(handle.zerolen && npos < nread) { # Some zero length sequences in input
+    warning("Zero-length sequences detected during dereplication. They will be ignored.")
+    is.pos <- width(x) > 0
+    x <- x[is.pos]
+  }
   # ranks are lexical rank
   srt <- srsort(x) # map from rank to sequence/quality/id
   rnk <- srrank(x) # map from read_i to rank (integer vec of ranks, ties take top rank)
@@ -152,6 +169,11 @@ qtables2 <- function(x, qeff = FALSE) {
   rnk2unqi <- rep(seq(length(uniques)), tab[tab>0]) # map from rank to uniques index
   map <- rnk2unqi[rnk] # map from read index to unique index
   
+  if(handle.zerolen && npos < nread) { # Fix mapping to include NAs for the zero-length input reads
+    foo <- map
+    map <- rep(as.integer(NA), nread)
+    map[is.pos] <- foo
+  }
   # do matrices
   qmat <- as(quality(srt), "matrix") # map from read_i to quality
   if(qeff) qmat <- 10^(-qmat/10)  # Convert to nominal error probability first
@@ -246,18 +268,90 @@ derepFasta <- function(fls, ...){
   derepFastq(fastqs, ...)
 }
 
-##########
-#' Read a FASTA file into a named uppercase character vector.
+#' Writes a named character vector of DNA sequences to a fasta file.
+#' Values are the sequences, and names are used for the id lines.
+#'
+#' @seealso \code{\link[Biostrings]{writeXStringSet}}
+#'
+#' @param object (Required). A named \code{character} vector.
+#' @param file (Required). The output file.
+#' @param mode (Optional). Default "w". Append with "a".
+#' @param width (Optional). Default 20000L. Maximum line length before newline.
+#' @param ... (Optional). Additonal arguments passed to \code{\link[Biostrings]{writeXStringSet}}.
+#' @return NULL.
+#' @rdname writeFasta
+#' @importFrom Biostrings DNAStringSet
+#' @importFrom Biostrings writeXStringSet
 #' 
-#' A wrapper for readFasta in the ShortRead package.
-#' 
-#' @param fl (Required). The path to the fasta file.
-#' 
-#' @importFrom ShortRead readFasta
-#' 
-getFasta <- function(fl) {
-  sr <- readFasta(fl)
-  seqs <- toupper(as(sread(sr), "character"))
-  names(seqs) <- as(id(sr), "character")
-  seqs
+setMethod("writeFasta", "character", function(object, file, mode="w", width=20000L, ...){
+  append = mode == "a"
+  seqs <- DNAStringSet(object)
+  if(is.null(names(seqs))) { names(seqs) <- as.character(seq(length(seqs))) }
+  writeXStringSet(seqs, file, ..., append = append, width=width, format = "fasta")
+})
+
+################################################################################
+## Get derep-class objects from the input object.
+## 
+## This function extracts a \code{\link{derep-class}} or list of \code{\link{derep-class}}
+##  from either an input \code{\link{derep-class}} or list of \code{\link{derep-class}} objects,
+##  or an input character vector of filenames to be dereplicated by \code{\link{derepFastq}}.
+## 
+## @param object (Required). The object from which to extract the \code{\link{derep-class}} object(s).
+## 
+## @param ... (Optional). Arguments passed to \code{\link{derepFastq}} if it is called.
+## 
+## @return A \code{\link{derep-class}} object or list of \code{\link{derep-class}} objects.
+## 
+## @examples
+## fn <- system.file("extdata", "sam1F.fastq.gz", package="dada2")
+## derep1 = derepFastq(fn)
+## identical(getDerep(derep1), getDerep(fn))
+## 
+getDerep <- function(object, ...) {
+  if(is(object, "derep")) { object }
+  else if(is.list.of(object, "derep")) { object }
+  else if(is(object, "character")) { derepFastq(object, ...) }
+  else{
+    stop("Unrecognized format: Requires derep-class object, list of derep-class objects, a directory containing fastq files, or a character vector of fastq files.")
+  }
 }
+
+################################################################################
+## Get file paths to the fastq files or compressed fastq files in a directory.
+## 
+## @param path (Required). The directory containing the (potentially compressed) fastq files.
+## 
+## @param pattern (Optional). Default c(".fastq.gz$", ".fastq.bz2$", ".fastq$").
+##  The ordered list of filename patterns to search for in the directory, see \code{\link{list.files}}.
+##  Patterns are searched for in order, and only files matching the first pattern for which any files
+##  were detected are returned.
+## 
+## @return A \code{\link{character}} vector of file paths to the (potentially compressed) fastq files..
+## 
+parseFastqDirectory <- function(path, pattern=c(".fastq.gz$", ".fastq.bz2$", ".fastq$")) {
+  # Validate inputs
+  if(length(path)>1) stop("If providing a directory, only one file path can be provided.")
+  if(!dir.exists(path)) stop("Provided path is not an existing directory.")
+  if(!is.character(pattern)) stop("File name pattern(s) must be provided in character format.")
+  # Initialize
+  fn <- character(0)
+  multi.ext <- FALSE
+  # Read in filenames
+  for(pat in pattern) {
+    foo <- list.files(path, pattern=pat)
+    if(length(foo) > 0) { # Files with this pattern detected
+      if(length(fn)==0) { fn <- foo }
+      else { multi.ext <- TRUE }
+    }
+  }
+  # Validate results and provide error messaging
+  if(length(fn) == 0) stop("No files found in this directory with the expected extension(s): ", paste(pattern, collapse=", "))
+  if(multi.ext) {
+    warning("Multiple fastq-type file extensions detected in this directory. Only those with extensions appearing earliest in
+             the search list were kept: ", paste(pattern, collapse=", "))
+  }
+  # Return
+  return(file.path(path, fn))
+}
+

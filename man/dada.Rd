@@ -4,12 +4,24 @@
 \alias{dada}
 \title{High resolution sample inference from amplicon data.}
 \usage{
-dada(derep, err, errorEstimationFunction = loessErrfun, selfConsist = FALSE,
-  pool = FALSE, multithread = FALSE, ...)
+dada(
+  derep,
+  err,
+  errorEstimationFunction = loessErrfun,
+  selfConsist = FALSE,
+  pool = FALSE,
+  priors = character(0),
+  multithread = FALSE,
+  verbose = TRUE,
+  ...
+)
 }
 \arguments{
-\item{derep}{(Required). A \code{\link{derep-class}} object, the output of \code{\link{derepFastq}}.
-A list of such objects can be provided, in which case each will be denoised with a shared error model.}
+\item{derep}{(Required). \code{character} or \code{\link{derep-class}}.
+The file path(s) to the fastq file(s), or a directory containing fastq file(s) corresponding to the
+the samples to be denoised. Compressed file formats such as .fastq.gz and .fastq.bz2 are supported.
+A \code{\link{derep-class}} object (or list thereof) returned by \code{link{derepFastq}} can also be provided.
+If multiple samples are provided, each will be denoised with a shared error model.}
 
 \item{err}{(Required). 16xN numeric matrix, or an object coercible by \code{\link{getErrors}} 
 such as the output of the \code{\link{learnErrors}} function.
@@ -42,14 +54,30 @@ by assuming that all reads are errors away from one true sequence.}
 
  If pool = TRUE, the algorithm will pool together all samples prior to sample inference.
  If pool = FALSE, sample inference is performed on each sample individually.
+ If pool = "pseudo", the algorithm will perform pseudo-pooling between individually processed samples.
  
  This argument has no effect if only 1 sample is provided, and \code{pool} does not affect
   error rates, which are always estimated from pooled observations across samples.}
+
+\item{priors}{(Optional). \code{character}. Default is character(0), i.e. no prior sequences.
+ 
+The priors argument provides a set of sequences for which there is prior information suggesting they may
+ truly exist, i.e. are not errors. The abundance p-value of dereplicated sequences that exactly match one
+ of the priors are calculated without conditioning on presence, allowing singletons to be detected,
+ and are compared to a reduced threshold `OMEGA_P` when forming new partitions.}
 
 \item{multithread}{(Optional). Default is FALSE.
 If TRUE, multithreading is enabled and the number of available threads is automatically determined.   
 If an integer is provided, the number of threads to use is set by passing the argument on to
 \code{\link{setThreadOptions}}.}
+
+\item{verbose}{(Optional). Default TRUE. 
+ Print verbose text output. More fine-grained control is available by providing an integer argument.
+\itemize{ 
+ \item{0: Silence. No text output (same as FALSE). }
+ \item{1: Basic text output (same as TRUE). }
+ \item{2: Detailed text output, mostly intended for debugging. }
+}}
 
 \item{...}{(Optional). All dada_opts can be passed in as arguments to the dada() function.
 See \code{\link{setDadaOpt}} for a full list and description of these options.}
@@ -68,7 +96,7 @@ If dada is run in selfConsist=TRUE mode, the algorithm will infer both the sampl
 \details{
 Briefly, \code{dada} implements a statistical test for the notion that a specific sequence was seen too many times
  to have been caused by amplicon errors from currently inferred sample sequences. Overly-abundant
- sequences are used as the seeds of new clusters of sequencing reads, and the final set of clusters
+ sequences are used as the seeds of new partitions of sequencing reads, and the final set of partitions
  is taken to represent the denoised composition of the sample. A more detailed explanation of the algorithm
  is found in two publications:
 
@@ -86,9 +114,11 @@ All comparisons between sequences performed by \code{dada} depend on pairwise al
  A kmer-distance screen and banded Needleman-Wunsch alignmemt. See \code{\link{setDadaOpt}}.
 }
 \examples{
-derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
-derep2 = derepFastq(system.file("extdata", "sam2F.fastq.gz", package="dada2"))
-dada(derep1, err=tperr1)
+fn1 <- system.file("extdata", "sam1F.fastq.gz", package="dada2")
+fn2 <- system.file("extdata", "sam2F.fastq.gz", package="dada2")
+derep1 = derepFastq(fn1)
+derep2 = derepFastq(fn2)
+dada(fn1, err=tperr1)
 dada(list(sam1=derep1, sam2=derep2), err=tperr1, selfConsist=TRUE)
 dada(derep1, err=inflateErr(tperr1,3), BAND_SIZE=32, OMEGA_A=1e-20)
 

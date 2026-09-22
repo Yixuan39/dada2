@@ -3,94 +3,80 @@
 #include "dada.h"
 // [[Rcpp::interfaces(cpp)]]
 
-/************* KMERS *****************
- * Current Kmer implementation assumes A/C/G/T only.
- */
-
-double kmer_dist(uint16_t *kv1, int len1, uint16_t *kv2, int len2, int k) {
-  int i;
-  int n_kmer = 1 << (2*k); // 4^k kmers
-  uint16_t dotsum = 0;
-  double dot = 0.0;
-  
-  for(i=0;i<n_kmer; i++) {
-    dotsum += (kv1[i] < kv2[i] ? kv1[i] : kv2[i]);
-  }
-
-  dot = ((double) dotsum)/((len1 < len2 ? len1 : len2) - k + 1.);
-  return (1. - dot);
-}
-
-uint16_t *get_kmer(char *seq, int k) {  // Assumes a clean seq (just 1s,2s,3s,4s)
-  int i, j, nti;
-  int len = strlen(seq);
-  size_t kmer = 0;
-  size_t n_kmers = (1 << (2*k));  // 4^k kmers
-  uint16_t *kvec = (uint16_t *) malloc(n_kmers * sizeof(uint16_t)); //E
-  if (kvec == NULL)  Rcpp::stop("Memory allocation failed.");
-  for(kmer=0;kmer<n_kmers;kmer++) { kvec[kmer] = 0; }
-
-  if(len <=0 || len > SEQLEN) {
-    Rcpp::stop("Unexpected sequence length.");
-  }
-
-  for(i=0; i<len-k; i++) {
-    kmer = 0;
-    for(j=i; j<i+k; j++) {
-      nti = ((int) seq[j]) - 1; // Change 1s, 2s, 3s, 4s, to 0/1/2/3
-      if(nti != 0 && nti != 1 && nti != 2 && nti != 3) {
-        Rcpp::stop("Unexpected nucleotide.");
-        kmer = 999999;
-        break;
-      }
-      kmer = 4*kmer + nti;
-    }
-    
-    // Make sure kmer index is valid. This doesn't solve the N's/-'s
-    // issue though, as the "length" of the string (# of kmers) needs
-    // to also reflect the reduction from the N's/-'s
-    if(kmer == 999999) { ; } 
-    else if(kmer >= n_kmers) {
-      Rcpp::stop("Kmer index out of range.");
-    } else { // Valid kmer
-      kvec[kmer]++;
-    }
-  }
-  return kvec;
-}
-
 /************* ALIGNMENT *****************
  * Banded Needleman Wunsch
  */
 
-char **raw_align(Raw *raw1, Raw *raw2, int score[4][4], int gap_p, int homo_gap_p, bool use_kmers, double kdist_cutoff, int band, bool vectorized_alignment) {
+char **raw_align(Raw *raw1, Raw *raw2, int match, int mismatch, int gap_p, int homo_gap_p, bool use_kmers, double kdist_cutoff, int band, bool vectorized_alignment, int SSE, bool gapless) {
   char **al;
-  double kdist;
-  
+  double kdist = 0.0;
+  double kodist = -1.0; // Needs to be different than kdist for fall-back when use_kmers=FALSE
+/// Commented lines relate to testing of add'l speedups
+///  static size_t nnw=0;
+///  static size_t ngl=0;
+///  static size_t nkm=0;
+///  static size_t REPORT=1000;
+
+  // KMER SCREEN
   if(use_kmers) {
-    kdist = kmer_dist(raw1->kmer, raw1->length, raw2->kmer, raw2->length, KMER_SIZE);
+    if(SSE==2) { // 8-bit explicit SSE
+      kdist = kmer_dist_SSEi_8(raw1->kmer8, raw1->length, raw2->kmer8, raw2->length, KMER_SIZE);
+      if(kdist<0) { // Overflow
+        kdist = kmer_dist_SSEi(raw1->kmer, raw1->length, raw2->kmer, raw2->length, KMER_SIZE);
+      }
+    } else if(SSE==1) { // 16-bit explicit SSE
+      kdist = kmer_dist_SSEi(raw1->kmer, raw1->length, raw2->kmer, raw2->length, KMER_SIZE);
+    } else { // implicit vectorization
+      kdist = kmer_dist(raw1->kmer, raw1->length, raw2->kmer, raw2->length, KMER_SIZE);
+    }
+  }
+  
+  // GAPLESS SCREEN (using KMERs)
+  if(use_kmers && gapless) {
+    if(SSE >= 1) {
+      kodist = kord_dist_SSEi(raw1->kord, raw1->length, raw2->kord, raw2->length, KMER_SIZE);
+    } else {
+      kodist = kord_dist(raw1->kord, raw1->length, raw2->kord, raw2->length, KMER_SIZE);
+    }
+  }
+  
+  // Make deprecated score matrix. To be removed in the future.
+  int score[4][4];
+  for(int i=0;i<4;i++) {
+    for(int j=0;j<4;j++) {
+      score[i][j] = i==j ? match : mismatch;
+    }
   }
   
   if(use_kmers && kdist > kdist_cutoff) {
     al = NULL;
-  } else if(vectorized_alignment) { // ASSUMES SCORE MATRIX REDUCES TO MATCH/MISMATCH
-    al = nwalign_vectorized2(raw1->seq, raw2->seq, (int16_t) score[0][0], (int16_t) score[0][1], (int16_t) gap_p, 0, band);
+///    nkm++;
+  } else if(band == 0 || (gapless && kodist == kdist)) {
+    al = nwalign_gapless(raw1->seq, raw1->length, raw2->seq, raw2->length);
+///    ngl++;
+  } else if(vectorized_alignment) { 
+    al = nwalign_vectorized2(raw1->seq, raw1->length, raw2->seq, raw2->length, (int16_t) match, (int16_t) mismatch, (int16_t) gap_p, 0, band);
+///    nnw++;
   } else if(homo_gap_p != gap_p && homo_gap_p <= 0) {
-    al = nwalign_endsfree_homo(raw1->seq, raw2->seq, score, gap_p, homo_gap_p, band);
+    al = nwalign_endsfree_homo(raw1->seq, raw1->length, raw2->seq, raw2->length, score, gap_p, homo_gap_p, band); // USES OLD SCORE_MATRIX FORMAT
+///    nnw++;
   } else {
-    al = nwalign_endsfree(raw1->seq, raw2->seq, score, gap_p, band);
+    al = nwalign_endsfree(raw1->seq, raw1->length, raw2->seq, raw2->length, score, gap_p, band); // USES OLD SCORE_MATRIX FORMAT
+///    nnw++;
   }
 
+///  if((nkm+ngl+nnw) == REPORT) {
+///    REPORT = REPORT*2;
+///    Rprintf("NW: %i, KMER: %i, GAPLESS: %i\n", nnw, nkm, ngl);
+///  }
   return al;
 }
 
 /* note: input sequence must end with string termination character, '\0' */
-char **nwalign_endsfree(const char *s1, const char *s2, int score[4][4], int gap_p, int band) {
-  static size_t nnw = 0;
+char **nwalign_endsfree(const char *s1, size_t len1, const char *s2, size_t len2, int score[4][4], int gap_p, int band) {
+///  static size_t nnw = 0;
   int i, j;
   int l, r;
-  unsigned int len1 = strlen(s1);
-  unsigned int len2 = strlen(s2);
   int diag, left, up;
   
   unsigned int nrow = len1+1;
@@ -225,18 +211,16 @@ char **nwalign_endsfree(const char *s1, const char *s2, int score[4][4], int gap
   free(al0);
   free(al1);
   
-  nnw++;
+///  nnw++;
   return al;
 }
 
 /* note: input sequence must end with string termination character, '\0' */
 /* 08-17-15: MJR homopolymer free gapping version of ends-free alignment */
-char **nwalign_endsfree_homo(const char *s1, const char *s2, int score[4][4], int gap_p, int homo_gap_p, int band) {
-  static size_t nnw = 0;
+char **nwalign_endsfree_homo(const char *s1, size_t len1, const char *s2, size_t len2, int score[4][4], int gap_p, int homo_gap_p, int band) {
+///  static size_t nnw = 0;
   int i, j, k;
   int l, r;
-  unsigned int len1 = strlen(s1);
-  unsigned int len2 = strlen(s2);
   int diag, left, up;
   
   //find locations where s1 has homopolymer and put 1s in homo1
@@ -407,7 +391,7 @@ char **nwalign_endsfree_homo(const char *s1, const char *s2, int score[4][4], in
   free(al0);
   free(al1);
   
-  nnw++;
+///  nnw++;
   return al;
 }
 
@@ -416,12 +400,10 @@ char **nwalign_endsfree_homo(const char *s1, const char *s2, int score[4][4], in
 // Not used within the dada method
 // Separate function to avoid if statement within performance critical nwalign_endsfree
 /* note: input sequence must end with string termination character, '\0' */
-char **nwalign(const char *s1, const char *s2, int score[4][4], int gap_p, int band) {
-  static size_t nnw = 0;
+char **nwalign(const char *s1, size_t len1, const char *s2, size_t len2, int score[4][4], int gap_p, int band) {
+///  static size_t nnw = 0;
   int i, j;
   int l, r;
-  unsigned int len1 = strlen(s1);
-  unsigned int len2 = strlen(s2);
   int diag, left, up;
   
   unsigned int nrow = len1+1;
@@ -550,8 +532,26 @@ char **nwalign(const char *s1, const char *s2, int score[4][4], int gap_p, int b
   free(al0);
   free(al1);
   
-  nnw++;
+///  nnw++;
   return al;
+}
+
+char **nwalign_gapless(const char *s1, size_t len1, const char *s2, size_t len2) {
+  size_t len_al = len1 > len2 ? len1 : len2;
+  // Allocate memory to alignment strings.
+  char **al = (char **) malloc( 2 * sizeof(char *) ); //E
+  if (al == NULL)  Rcpp::stop("Memory allocation failed.");
+  al[0] = (char *) malloc(len_al+1); //E
+  al[1] = (char *) malloc(len_al+1); //E
+  if (al[0] == NULL || al[1] == NULL)  Rcpp::stop("Memory allocation failed.");
+  // Copy strings into the alignment strings
+  for (int i=0;i<len_al;i++) {
+    al[0][i] = i < len1 ? s1[i] : '-';
+    al[1][i] = i < len2 ? s2[i] : '-';
+  }
+  al[0][len_al] = '\0';
+  al[1][len_al] = '\0';
+  return(al);
 }
 
 /************* SUBS *****************
@@ -571,9 +571,6 @@ Sub *al2subs(char **al) {
   int i, i0, i1, align_length, len0, nsubs;
   bool is_nt0, is_nt1;
   char *al0, *al1; // dummy pointers to the sequences in the alignment
-  
-  // define dummy pointer to key string
-  char *pkey;
   
   if(!al) { // Null alignment (outside kmer thresh) -> Null sub
     Sub *sub = NULL;
@@ -605,15 +602,12 @@ Sub *al2subs(char **al) {
   sub->pos = (uint16_t *) malloc(nsubs * sizeof(uint16_t)); //E
   sub->nt0 = (char *) malloc(nsubs); //E
   sub->nt1 = (char *) malloc(nsubs); //E
-  sub->key = (char *) malloc((6*nsubs) + 1); // Must be modified if SEQLEN > 1000 //E
-  if (sub->map == NULL || sub->pos == NULL || sub->nt0 == NULL || sub->nt1 == NULL || sub->key == NULL) {
+  if (sub->map == NULL || sub->pos == NULL || sub->nt0 == NULL || sub->nt1 == NULL) {
     Rcpp::stop("Memory allocation failed.");
   }
   sub->nsubs=0;
     
-  // traverse the alignment and record substitutions while building the hash key
-  pkey = sub->key;
-  
+  // traverse the alignment and record substitutions
   i0 = -1; i1 = -1;
   al0 = al[0]; al1 = al[1];
   for(i=0;i<align_length;i++) {
@@ -636,44 +630,34 @@ Sub *al2subs(char **al) {
         sub->pos[sub->nsubs] = i0;
         sub->nt0[sub->nsubs] = al0[i];
         sub->nt1[sub->nsubs] = al1[i];
-        
-        // Assuming space is available
-        // Assuming sequences are <1000 nts long (3 digit positions)
-        *pkey++ = al0[i];
-        *pkey++ = '0' + i0/100;
-        *pkey++ = '0' + (i0 % 100)/10;
-        *pkey++ = '0' + (i0 % 10);
-        *pkey++ = al1[i];
-        *pkey++ = ',';
         sub->nsubs++;
       }
     }
   } // for(i=0;i<align_length;i++)
-  *pkey = '\0';
 
   return sub;
 }
 
 // Wrapper for al2subs(raw_align(...)) that manages memory and qualities
-Sub *sub_new(Raw *raw0, Raw *raw1, int score[4][4], int gap_p, int homo_gap_p, bool use_kmers, double kdist_cutoff, int band, bool vectorized_alignment) {
+Sub *sub_new(Raw *raw0, Raw *raw1, int match, int mismatch, int gap_p, int homo_gap_p, bool use_kmers, double kdist_cutoff, int band, bool vectorized_alignment, int SSE, bool gapless) {
   int s;
   char **al;
   Sub *sub;
 
-  al = raw_align(raw0, raw1, score, gap_p, homo_gap_p, use_kmers, kdist_cutoff, band, vectorized_alignment);
+  al = raw_align(raw0, raw1, match, mismatch, gap_p, homo_gap_p, use_kmers, kdist_cutoff, band, vectorized_alignment, SSE, gapless);
   sub = al2subs(al);
 
   if(sub) {
     sub->q0 = NULL;
     sub->q1 = NULL;
     if(raw0->qual && raw1->qual) {
-      sub->q0 = (double *) malloc(sub->nsubs * sizeof(double)); //E
-      sub->q1 = (double *) malloc(sub->nsubs * sizeof(double)); //E
+      sub->q0 = (uint8_t *) malloc(sub->nsubs * sizeof(uint8_t)); //E
+      sub->q1 = (uint8_t *) malloc(sub->nsubs * sizeof(uint8_t)); //E
       if (sub->q0 == NULL || sub->q1 == NULL) { Rcpp::stop("Memory allocation failed."); }
       
       for(s=0;s<sub->nsubs;s++) {
-        sub->q0[s] = raw0->qual[sub->pos[s]];
-        sub->q1[s] = raw1->qual[sub->map[sub->pos[s]]];
+        sub->q0[s] = raw0->qual[sub->pos[s]]; // allocated uint8_t
+        sub->q1[s] = raw1->qual[sub->map[sub->pos[s]]]; // allocated uint8_t
       }
     }
   }
@@ -701,8 +685,7 @@ Sub *sub_copy(Sub *sub) {
   rsub->pos = (uint16_t *) malloc(nsubs * sizeof(uint16_t)); //E
   rsub->nt0 = (char *) malloc(nsubs); //E
   rsub->nt1 = (char *) malloc(nsubs); //E
-  rsub->key = (char *) malloc((6*nsubs) + 1); // Must be modified if SEQLEN > 1000 //E
-  if (rsub->map == NULL || rsub->pos == NULL || rsub->nt0 == NULL || rsub->nt1 == NULL || rsub->key == NULL) {
+  if (rsub->map == NULL || rsub->pos == NULL || rsub->nt0 == NULL || rsub->nt1 == NULL) {
     Rcpp::stop("Memory allocation failed.");
   }
   
@@ -712,14 +695,13 @@ Sub *sub_copy(Sub *sub) {
   memcpy(rsub->pos, sub->pos, nsubs * sizeof(uint16_t));
   memcpy(rsub->nt0, sub->nt0, nsubs);
   memcpy(rsub->nt1, sub->nt1, nsubs);
-  memcpy(rsub->key, sub->key, (6*nsubs) + 1);
 
   if(sub->q0 && sub->q1) {
-    rsub->q0 = (double *) malloc(nsubs * sizeof(double)); //E
-    rsub->q1 = (double *) malloc(nsubs * sizeof(double)); //E
+    rsub->q0 = (uint8_t *) malloc(nsubs * sizeof(uint8_t)); //E
+    rsub->q1 = (uint8_t *) malloc(nsubs * sizeof(uint8_t)); //E
     if (rsub->q0 == NULL || rsub->q1 == NULL) { Rcpp::stop("Memory allocation failed."); }
-    memcpy(rsub->q0, sub->q0, nsubs * sizeof(double));
-    memcpy(rsub->q1, sub->q1, nsubs * sizeof(double));
+    memcpy(rsub->q0, sub->q0, nsubs * sizeof(uint8_t)); // allocated double
+    memcpy(rsub->q1, sub->q1, nsubs * sizeof(uint8_t)); // allocated double
   } else {
     rsub->q0 = NULL;
     rsub->q1 = NULL;
@@ -731,7 +713,6 @@ Sub *sub_copy(Sub *sub) {
 // Destructor for sub object
 void sub_free(Sub *sub) {
   if(sub) { // not a NULL sub
-    free(sub->key);
     free(sub->nt1);
     free(sub->nt0);
     free(sub->pos);

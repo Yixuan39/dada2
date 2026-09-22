@@ -4,10 +4,28 @@
 \alias{fastqFilter}
 \title{Filter and trim a fastq file.}
 \usage{
-fastqFilter(fn, fout, truncQ = 2, truncLen = 0, maxLen = Inf,
-  minLen = 20, trimLeft = 0, maxN = 0, minQ = 0, maxEE = Inf,
-  rm.phix = TRUE, primer.fwd = NULL, n = 1e+06, OMP = TRUE,
-  compress = TRUE, verbose = FALSE, ...)
+fastqFilter(
+  fn,
+  fout,
+  truncQ = 2,
+  truncLen = 0,
+  maxLen = Inf,
+  minLen = 20,
+  trimLeft = 0,
+  trimRight = 0,
+  maxN = 0,
+  minQ = 0,
+  maxEE = Inf,
+  rm.phix = TRUE,
+  rm.lowcomplex = 0,
+  orient.fwd = NULL,
+  n = 1e+06,
+  OMP = TRUE,
+  qualityType = "Auto",
+  compress = TRUE,
+  verbose = FALSE,
+  ...
+)
 }
 \arguments{
 \item{fn}{(Required). The path to the input fastq file.}
@@ -31,6 +49,10 @@ Remove reads with length less than minLen. minLen is enforced after all other tr
 The number of nucleotides to remove from the start of each read. If both \code{truncLen} and 
 \code{trimLeft} are provided, filtered reads will have length \code{truncLen-trimLeft}.}
 
+\item{trimRight}{(Optional). Default 0.
+The number of nucleotides to remove from the end of each read. If both \code{truncLen} and 
+\code{trimRight} are provided, truncation will be performed after \code{trimRight} is enforced.}
+
 \item{maxN}{(Optional). Default 0.
 After truncation, sequences with more than \code{maxN} Ns will be discarded. 
 Note that \code{\link{dada}} currently does not allow Ns.}
@@ -46,18 +68,36 @@ Expected errors are calculated from the nominal definition of the quality score:
 If TRUE, discard reads that match against the phiX genome, as determined by 
 \code{\link{isPhiX}}.}
 
-\item{primer.fwd}{(Optional). Default NULL.
-A character string defining the forward primer. Only allows unambiguous nucleotides. The primer will be
-compared to the first len(primer.fwd) nucleotides at the start of the read. If there is
-not an exact match, the read is filtered out.}
+\item{rm.lowcomplex}{(Optional). Default 0.
+If greater than 0, reads with an effective number of kmers less than this value will be removed.
+The effective number of kmers is determined by \code{\link{seqComplexity}} using a Shannon information
+approximation. The default kmer-size is 2, and therefore perfectly random sequences will approach an
+effective kmer number of 16 = 4 (nucleotides) ^ 2 (kmer size).}
+
+\item{orient.fwd}{(Optional). Default NULL.
+A character string present at the start of valid reads. Only allows unambiguous nucleotides. 
+This string is compared to the start of each read, and the reverse complement of each read.
+If it exactly matches the start of the read, the read is kept.
+If it exactly matches the start of the reverse-complement read, the read is reverse-complemented and kept.
+Otherwise the read if filtered out.
+The primary use of this parameter is to unify the orientation of amplicon sequencing libraries that
+are a mixture of forward and reverse orientations, and that include the forward primer on the reads.}
 
 \item{n}{(Optional). The number of records (reads) to read in and filter at any one time. 
 This controls the peak memory requirement so that very large fastq files are supported. 
-Default is \code{1e6}, one-million reads. See \code{\link{FastqStreamer}} for details.}
+Default is \code{1e6}, one-million reads. See \code{\link[ShortRead]{FastqStreamer}} for details.}
 
 \item{OMP}{(Optional). Default TRUE.
-Whether or not to use OMP multithreading when calling \code{\link{FastqStreamer}}. Set this to FALSE if
-calling this function within a parallelized chunk of code (eg. within \code{\link[parallel]{mclapply}}).}
+Whether or not to use OMP multithreading when calling \code{\link[ShortRead]{FastqStreamer}}. 
+Set this to FALSE if calling this function within a parallelized chunk of code 
+(eg. within \code{\link[parallel]{mclapply}}).}
+
+\item{qualityType}{(Optional). \code{character(1)}.
+The quality encoding of the fastq file(s). "Auto" (the default) means to
+attempt to auto-detect the encoding. This may fail for PacBio files with
+uniformly high quality scores, in which case use "FastqQuality". This
+parameter is passed on to \code{\link[ShortRead]{readFastq}}; see
+information there for details.}
 
 \item{compress}{(Optional). Default TRUE.
 Whether the output fastq file should be gzip compressed.}

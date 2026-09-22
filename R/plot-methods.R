@@ -1,75 +1,3 @@
-#' Plot Substitution Pairs from DADA Result
-#' 
-#' This is similar to original DADA article, Figure 6.
-#' 
-#' @param dadaOut (Required). A \code{\link{dada-class}} object.
-#' 
-#' @param facetByGrp (Optional). Default TRUE.
-#'  Whether to plot all substitution groups together in one panel
-#'  or separately on a grid of panels with a linear model fit.
-#' 
-#' @return A \code{\link{ggplot}2} object.
-#'  Will be rendered to default device if \code{\link{print}ed},
-#'  or can be stored and further modified.
-#'  See \code{\link{ggsave}} for additional options.
-#' 
-#' @importFrom reshape2 melt
-#' @importFrom reshape2 dcast
-#' @importFrom data.table data.table
-#' @importFrom data.table setnames
-#' @importFrom data.table dcast.data.table
-#' @importFrom data.table :=
-#' @import ggplot2
-#' 
-#' @export
-#' 
-#' @examples 
-#' derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"), verbose = TRUE)
-#' dada1 <- dada(derep1, err = inflateErr(tperr1, 2), selfConsist = TRUE) 
-#' plotComplementarySubstitutions(dada1)
-#' 
-plotComplementarySubstitutions = function(dadaOut, facetByGrp = TRUE){
-  transdt = data.table(melt(dadaOut$trans))
-  setnames(transdt, c("Substitution", "Quality", "Count"))
-  transdt[, Sub1 := substr(Substitution, 1, 1)]
-  transdt[, Sub2 := substr(Substitution, 3, 3)]
-  # For a plot like from the DADA-1 paper, Figure 6,
-  # Map color to complementary pairs of errors
-  # red = (A→G,T→C) cyan=(C→T,G→A) green=(A→T,T→A) black=(C→A,G→T) blue=(A→C,T→G) purple=(C→G,G→C).
-  CompSubGroups = c(A2G = "A2GT2C", T2C = "A2GT2C",
-                    C2T = "C2TG2A", G2A = "C2TG2A",
-                    A2T = "A2TT2A", T2A = "A2TT2A",
-                    C2A = "C2AG2T", G2T = "C2AG2T",
-                    A2C = "A2CT2G", T2G = "A2CT2G",
-                    C2G = "C2GG2C", G2C = "C2GG2C") 
-  transdt[, SubGrp := CompSubGroups[as.character(Substitution)]]
-  # Redefine the Forward/Reverse pairings
-  transdt[(substr(SubGrp, 1, 3) == Substitution), Direction := "Forward"]
-  transdt[(substr(SubGrp, 4, 6) == Substitution), Direction := "Reverse"]
-  # Define plot as in DADA1 article Figure 6
-  # (but better because it is not matlab)
-  tCast = dcast.data.table(data = transdt[(Direction != "NoChange")][Count > 0],
-                           formula = SubGrp + Quality ~ Direction,
-                           value.var = "Count",
-                           drop = TRUE)
-  # Remove missing
-  tCast <- tCast[!is.na(Forward)][!is.na(Reverse)]
-  # Define ggplot2 plot
-  p1 = ggplot(tCast, aes(Forward, Reverse, color = SubGrp, size = Quality)) + 
-    scale_x_log10() +
-    scale_y_log10() +
-    geom_abline(intercept=0, slope=1, alpha = 0.5, linetype = 2) +
-    geom_point(alpha = 0.7) + 
-    ggtitle("Substitution Pairs Count Comparison")
-  if(facetByGrp){
-    # If TRUE, facet and add simple linear model fit
-    p1 <- p1 + 
-      stat_smooth(method = "lm") +
-      facet_wrap(~SubGrp, drop = TRUE)
-  }
-  return(p1)
-}
-
 #' Plot observed and estimated error rates.
 #' 
 #' This function plots the observed frequency of each transition
@@ -175,14 +103,25 @@ plotErrors <- function(dq, nti=c("A","C","G","T"), ntj=c("A","C","G","T"), obs=T
   transdf$Nominal <- (1/3)*10^-(transdf$Qual/10)
   transdf$Nominal[transdf$Transition %in% c("A2A", "C2C", "G2G", "T2T")] <- 1 - 10^-(transdf$Qual[transdf$Transition %in% c("A2A", "C2C", "G2G", "T2T")]/10)
   
+  # Blank out the self-transition entries (A read as A, etc.)
+  is.self <- transdf$from == transdf$to
+  transdf[is.self, "count"] <- NA
+  transdf[is.self, "tot"] <- NA
+  transdf[is.self, "Observed"] <- NA
+  transdf[is.self, "Estimated"] <- NA
+  transdf[is.self, "Input"] <- NA
+  if(nominalQ) transdf[is.self, "Nominal"] <- NA
+  
   p <- ggplot(data=transdf[transdf$from %in% nti & transdf$to %in% ntj,], aes(x=Qual))
-  if(obs) p <- p + geom_point(aes(y=Observed), na.rm=TRUE)
-  if(err_out)  p <- p + geom_line(aes(y=Estimated))
+  if(obs) p <- p + geom_point(aes(y=Observed, size=count), color="gray40", na.rm=TRUE)
   if(err_in)   p <- p + geom_line(aes(y=Input), linetype="dashed")
+  if(err_out)  p <- p + geom_line(aes(y=Estimated))
   if(nominalQ) p <- p + geom_line(aes(y=Nominal), color="red")
   p <- p + scale_y_log10()
+  p <- p + scale_size_area(max_size=4) + guides(size="none")
   p <- p + facet_wrap(~Transition, nrow=length(nti))
   p <- p + xlab("Consensus quality score") + ylab("Error frequency (log10)")
+  p <- p + theme_bw()
   p
 }
 
@@ -195,6 +134,9 @@ plotErrors <- function(dq, nti=c("A","C","G","T"), ntj=c("A","C","G","T"), obs=T
 #' heat map, with dark colors corresponding to higher frequency. The plotted lines
 #' show positional summary statistics: green is the mean, orange is the median, and
 #' the dashed orange lines are the 25th and 75th quantiles.
+#' 
+#' If the sequences vary in length, a red line will be plotted showing the percentage
+#' of reads that extend to at least that position.
 #' 
 #' @param fl (Required). \code{character}.
 #'  File path(s) to fastq or fastq.gz file(s).
@@ -219,15 +161,15 @@ plotErrors <- function(dq, nti=c("A","C","G","T"), ntj=c("A","C","G","T"), obs=T
 #' plotQualityProfile(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
 #' 
 plotQualityProfile <- function(fl, n=500000, aggregate=FALSE) {
-  statdf <- data.frame(Cycle=integer(0), Mean=numeric(0), Q25=numeric(0), Q50=numeric(0), Q75=numeric(0), file=character(0))
+  statdf <- data.frame(Cycle=integer(0), Mean=numeric(0), Q25=numeric(0), Q50=numeric(0), Q75=numeric(0), Cum=numeric(0), file=character(0))
   anndf <- data.frame(minScore=numeric(0), label=character(0), rclabel=character(0), rc=numeric(0), file=character(0))
 
   FIRST <- TRUE
-  for(f in fl) {
+  for(f in fl[!is.na(fl)]) {
     srqa <- qa(f, n=n)
     df <- srqa[["perCycle"]]$quality
-    rc <- srqa[["readCounts"]]$read
-    if (rc >= n){
+    rc <- sum(srqa[["readCounts"]]$read) # Handle aggregate form from qa of a directory
+    if (rc >= n) { 
       rclabel <- paste("Reads >= ", n)
     } else {
       rclabel <- paste("Reads: ", rc)
@@ -238,47 +180,132 @@ plotQualityProfile <- function(fl, n=500000, aggregate=FALSE) {
     q25s <- by(df, df$Cycle, function(foo) get_quant(foo$Score, foo$Count, 0.25), simplify=TRUE)
     q50s <- by(df, df$Cycle, function(foo) get_quant(foo$Score, foo$Count, 0.5), simplify=TRUE)
     q75s <- by(df, df$Cycle, function(foo) get_quant(foo$Score, foo$Count, 0.75), simplify=TRUE)
-    if(!all(sapply(list(names(q25s), names(q50s), names(q75s)), identical, rownames(means)))) {
+    cums <- by(df, df$Cycle, function(foo) sum(foo$Count), simplify=TRUE)
+    if(!all(sapply(list(names(q25s), names(q50s), names(q75s), names(cums)), identical, rownames(means)))) {
       stop("Calculated quantiles/means weren't compatible.")
     }
     if(FIRST) {
-      plotdf <- cbind(df, file=f)
+      plotdf <- cbind(df, file=basename(f))
       FIRST <- FALSE
-    } else { plotdf <- rbind(plotdf, cbind(df, file=f)) }
+    } else { plotdf <- rbind(plotdf, cbind(df, file=basename(f))) }
     statdf <- rbind(statdf, data.frame(Cycle=as.integer(rownames(means)), Mean=means, 
-                                       Q25=as.vector(q25s), Q50=as.vector(q50s), Q75=as.vector(q75s), file=f))
-    anndf <- rbind(anndf, data.frame(minScore=min(df$Score), label=basename(f), rclabel=rclabel, rc=rc, file=f))
+                                       Q25=as.vector(q25s), Q50=as.vector(q50s), Q75=as.vector(q75s), Cum=10*as.vector(cums)/min(rc, n), file=basename(f)))
+    anndf <- rbind(anndf, data.frame(minScore=min(df$Score), label=basename(f), rclabel=rclabel, rc=rc, file=basename(f)))
   }
   anndf$minScore <- min(anndf$minScore)
   # Create plot
   if (aggregate) {
   	plotdf.summary <- aggregate(Count ~ Cycle + Score, plotdf, sum)
+  	plotdf.summary$label <- paste(nrow(anndf), "files (aggregated)")
   	means <- rowsum(plotdf.summary$Score*plotdf.summary$Count, plotdf.summary$Cycle)/rowsum(plotdf.summary$Count, plotdf.summary$Cycle)
     q25s <- by(plotdf.summary, plotdf.summary$Cycle, function(foo) get_quant(foo$Score, foo$Count, 0.25), simplify=TRUE)
     q50s <- by(plotdf.summary, plotdf.summary$Cycle, function(foo) get_quant(foo$Score, foo$Count, 0.5), simplify=TRUE)
     q75s <- by(plotdf.summary, plotdf.summary$Cycle, function(foo) get_quant(foo$Score, foo$Count, 0.75), simplify=TRUE)
-    statdf.summary <- data.frame(Cycle=as.integer(rownames(means)), Mean=means, Q25=as.vector(q25s), Q50=as.vector(q50s), Q75=as.vector(q75s))
-    ggplot(data=plotdf.summary, aes(x=Cycle, y=Score)) + geom_tile(aes(fill=Count)) + 
+    cums <- by(plotdf.summary, plotdf.summary$Cycle, function(foo) sum(foo$Count), simplify=TRUE)
+    statdf.summary <- data.frame(Cycle=as.integer(rownames(means)), Mean=means, Q25=as.vector(q25s), Q50=as.vector(q50s), Q75=as.vector(q75s), Cum=10*as.vector(cums)/sum(pmin(anndf$rc, n)))
+    p <- ggplot(data=plotdf.summary, aes(x=Cycle, y=Score)) + geom_tile(aes(fill=Count), height=1) + 
 		  scale_fill_gradient(low="#F5F5F5", high="black") + 
 		  geom_line(data=statdf.summary, aes(y=Mean), color="#66C2A5") +
-		  geom_line(data=statdf.summary, aes(y=Q25), color="#FC8D62", size=0.25, linetype="dashed") +
-		  geom_line(data=statdf.summary, aes(y=Q50), color="#FC8D62", size=0.25) +
-		  geom_line(data=statdf.summary, aes(y=Q75), color="#FC8D62", size=0.25, linetype="dashed") +
+		  geom_line(data=statdf.summary, aes(y=Q25), color="#FC8D62", linewidth=0.25, linetype="dashed") +
+		  geom_line(data=statdf.summary, aes(y=Q50), color="#FC8D62", linewidth=0.25) +
+		  geom_line(data=statdf.summary, aes(y=Q75), color="#FC8D62", linewidth=0.25, linetype="dashed") +
 		  ylab("Quality Score") + xlab("Cycle") + 
-		  annotate("text", x=0, y=min(anndf$minScore)+2, label=sprintf("%d files (aggregated)", nrow(anndf)), hjust=0) + 
-		  annotate("text", x=0, y=min(anndf$minScore)+1, label=sprintf("Total reads: %d", sum(anndf$rc)), hjust=0) + 
-		  theme_bw() + theme(panel.grid=element_blank()) + guides(fill=FALSE) + theme(strip.background = element_blank(), strip.text.x = element_blank())
+		  annotate("text", x=0, y=0, label=sprintf("Total reads: %d", sum(anndf$rc)), color="red", hjust=0) + 
+		  theme_bw() + theme(panel.grid=element_blank()) + guides(fill="none") + 
+      facet_wrap(~label)
+    if(length(unique(statdf$Cum))>1) {
+      p <- p + geom_line(data=statdf.summary, aes(y=Cum), color="red", linewidth=0.25, linetype="solid") +
+        scale_y_continuous(limits = c(0,NA), sec.axis=sec_axis(~.*10, breaks=c(0,100), labels=c("0%", "100%"))) + 
+        theme(axis.text.y.right = element_text(color = "red"), axis.title.y.right = element_text(color = "red"))
+    } else {
+      p <- p + ylim(c(0,NA))
+    }
   } else {
-  	ggplot(data=plotdf, aes(x=Cycle, y=Score)) + geom_tile(aes(fill=Count)) + 
+  	p <- ggplot(data=plotdf, aes(x=Cycle, y=Score)) + geom_tile(aes(fill=Count), height=1) + 
 		  scale_fill_gradient(low="#F5F5F5", high="black") + 
 		  geom_line(data=statdf, aes(y=Mean), color="#66C2A5") +
-		  geom_line(data=statdf, aes(y=Q25), color="#FC8D62", size=0.25, linetype="dashed") +
-		  geom_line(data=statdf, aes(y=Q50), color="#FC8D62", size=0.25) +
-		  geom_line(data=statdf, aes(y=Q75), color="#FC8D62", size=0.25, linetype="dashed") +
-		  ylab("Quality Score") + xlab("Cycle") +
-		  theme_bw() + theme(panel.grid=element_blank()) + guides(fill=FALSE) +
-		  geom_text(data=anndf, aes(x=0, label=label, y=minScore+2), hjust=0, vjust=0) +
-		  geom_text(data=anndf, aes(x=0, label=rclabel, y=minScore+2), hjust=0, vjust=2) + 
-		  facet_wrap(~file) + theme(strip.background = element_blank(), strip.text.x = element_blank())
-	}
+		  geom_line(data=statdf, aes(y=Q25), color="#FC8D62", linewidth=0.25, linetype="dashed") +
+		  geom_line(data=statdf, aes(y=Q50), color="#FC8D62", linewidth=0.25) +
+      geom_line(data=statdf, aes(y=Q75), color="#FC8D62", linewidth=0.25, linetype="dashed") +
+      ylab("Quality Score") + xlab("Cycle") +
+		  theme_bw() + theme(panel.grid=element_blank()) + guides(fill="none") +
+		  geom_text(data=anndf, aes(x=0, label=rclabel, y=0), color="red", hjust=0) + 
+      facet_wrap(~file)
+    if(length(unique(statdf$Cum))>1) {
+      p <- p + geom_line(data=statdf, aes(y=Cum), color="red", linewidth=0.25, linetype="solid") +
+        scale_y_continuous(limits = c(0,NA), sec.axis=sec_axis(~.*10, breaks=c(0,100), labels=c("0%", "100%"))) + 
+        theme(axis.text.y.right = element_text(color = "red"), axis.title.y.right = element_text(color = "red"))
+    } else {
+      p <- p + ylim(c(0,NA))
+    }
+  }
+  p
 }
+
+#' Plot sequence complexity profile of a fastq file.
+#' 
+#' This function plots a histogram of the distribution of sequence complexities
+#' in the form of effective numbers of kmers as determined by \code{\link{seqComplexity}}.
+#' By default, kmers of size 2 are used, in which case a perfectly random sequences
+#' will approach an effective kmer number of 16 = 4 (nucleotides) ^ 2 (kmer size).
+#' 
+#' @param fl (Required). \code{character}.
+#'  File path(s) to fastq or fastq.gz file(s).
+#' 
+#' @param kmerSize (Optional). Default 2.
+#'  The size of the kmers (or "oligonucleotides" or "words") to use.
+#'
+#' @param window (Optional). Default NULL.
+#' The width in nucleotides of the moving window. If NULL the whole sequence is used.
+#'
+#' @param by (Optional). Default 5.
+#' The step size in nucleotides between each moving window tested.
+#'
+#' @param n (Optional). Default 100,000.
+#'  The number of records to sample from the fastq file.
+#' 
+#' @param bins (Optional). Default 100.
+#'  The number of bins to use for the histogram.
+#'
+#' @param aggregate (Optional). Default FALSE.
+#'  If TRUE, compute an aggregate quality profile for all fastq files provided.
+#'  
+#' @param ... (Optional). Arguments passed on to \code{\link{geom_histogram}}.
+#' 
+#' @return A \code{\link{ggplot}2} object.
+#'  Will be rendered to default device if \code{\link{print}ed},
+#'  or can be stored and further modified.
+#'  See \code{\link{ggsave}} for additional options.
+#'  
+#' @importFrom ShortRead FastqSampler
+#' @importFrom ShortRead yield
+#' @import ggplot2
+#' 
+#' @seealso
+#'  \code{\link{seqComplexity}}
+#'  \code{\link[Biostrings]{oligonucleotideFrequency}}
+#'
+#' @export
+#' 
+#' @examples
+#' plotComplexity(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
+#' 
+plotComplexity <- function(fl, kmerSize=2, window=NULL, by=5, n=100000, bins=100, aggregate=FALSE, ...) {
+  cmplx <- lapply(fl, function(fli) {
+    f <- FastqSampler(fli, n)
+    srq <- yield(f)
+    close(f)
+    seqComplexity(sread(srq), kmerSize=kmerSize, window=window, by=by) # Also seqlens for warning?
+  })
+  df <- data.frame( complexity=unlist(cmplx), 
+                    file=rep(basename(fl), times=sapply(cmplx, length)) )
+  if(aggregate) { df$file <- paste(length(fl), "files (aggregated)") }
+  p <- ggplot(data=df, aes(x=complexity)) + geom_histogram(bins=bins, na.rm=TRUE, ...) +
+    ylab("Count") + xlab("Effective Oligonucleotide Number") +
+    theme_bw() +
+    facet_wrap(~file) + 
+    scale_x_continuous(limits=c(0, 4^kmerSize), breaks=seq(0, 4^kmerSize, (4^kmerSize)/4))
+  p
+}
+
+

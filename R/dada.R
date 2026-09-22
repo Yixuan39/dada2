@@ -1,10 +1,13 @@
 dada_opts <- new.env()
 assign("OMEGA_A", 1e-40, envir = dada_opts)
+assign("OMEGA_P", 1e-4, envir = dada_opts)
+assign("OMEGA_C", 1e-40, envir=dada_opts)
+assign("DETECT_SINGLETONS", FALSE, envir=dada_opts)
 assign("USE_KMERS", TRUE, envir = dada_opts)
 assign("KDIST_CUTOFF", 0.42, envir = dada_opts)
 assign("MAX_CONSIST", 10, envir = dada_opts)
-assign("SCORE_MATRIX", matrix(c(5L, -4L, -4L, -4L, -4L, 5L, -4L, -4L, -4L, -4L, 5L, -4L, -4L, -4L, -4L, 5L),
-                              nrow=4, byrow=TRUE), envir = dada_opts)
+#assign("SCORE_MATRIX", matrix(c(5L, -4L, -4L, -4L, -4L, 5L, -4L, -4L, -4L, -4L, 5L, -4L, -4L, -4L, -4L, 5L),
+#                              nrow=4, byrow=TRUE), envir = dada_opts)
 assign("MATCH", 5L, envir = dada_opts)
 assign("MISMATCH", -4L, envir = dada_opts)
 assign("GAP_PENALTY", -8L, envir = dada_opts)
@@ -13,9 +16,14 @@ assign("VECTORIZED_ALIGNMENT", TRUE, envir = dada_opts)
 assign("MAX_CLUST", 0, envir=dada_opts)
 assign("MIN_FOLD", 1, envir=dada_opts)
 assign("MIN_HAMMING", 1, envir=dada_opts)
+assign("MIN_ABUNDANCE", 1, envir=dada_opts)
 assign("USE_QUALS", TRUE, envir=dada_opts)
-assign("VERBOSE", FALSE, envir=dada_opts)
 assign("HOMOPOLYMER_GAP_PENALTY", NULL, envir = dada_opts)
+assign("SSE", 2, envir = dada_opts)
+assign("GAPLESS", TRUE, envir=dada_opts)
+assign("GREEDY", TRUE, envir=dada_opts)
+assign("PSEUDO_PREVALENCE", 2, envir=dada_opts)
+assign("PSEUDO_ABUNDANCE", Inf, envir=dada_opts)
 # assign("FINAL_CONSENSUS", FALSE, envir=dada_opts) # NON-FUNCTIONAL AT THE MOMENT
 
 #' High resolution sample inference from amplicon data.
@@ -27,8 +35,11 @@ assign("HOMOPOLYMER_GAP_PENALTY", NULL, envir = dada_opts)
 #' If dada is run in selfConsist=TRUE mode, the algorithm will infer both the sample composition and
 #'  the parameters of its error model from the data.
 #'  
-#' @param derep (Required). A \code{\link{derep-class}} object, the output of \code{\link{derepFastq}}.
-#'  A list of such objects can be provided, in which case each will be denoised with a shared error model.
+#' @param derep (Required). \code{character} or \code{\link{derep-class}}.
+#'  The file path(s) to the fastq file(s), or a directory containing fastq file(s) corresponding to the
+#'  the samples to be denoised. Compressed file formats such as .fastq.gz and .fastq.bz2 are supported.
+#'  A \code{\link{derep-class}} object (or list thereof) returned by \code{link{derepFastq}} can also be provided.
+#'  If multiple samples are provided, each will be denoised with a shared error model.
 #'  
 #' @param err (Required). 16xN numeric matrix, or an object coercible by \code{\link{getErrors}} 
 #'  such as the output of the \code{\link{learnErrors}} function.
@@ -61,15 +72,31 @@ assign("HOMOPOLYMER_GAP_PENALTY", NULL, envir = dada_opts)
 #' 
 #'  If pool = TRUE, the algorithm will pool together all samples prior to sample inference.
 #'  If pool = FALSE, sample inference is performed on each sample individually.
+#'  If pool = "pseudo", the algorithm will perform pseudo-pooling between individually processed samples.
 #'  
 #'  This argument has no effect if only 1 sample is provided, and \code{pool} does not affect
 #'   error rates, which are always estimated from pooled observations across samples.
+#'   
+#' @param priors (Optional). \code{character}. Default is character(0), i.e. no prior sequences.
+#'  
+#' The priors argument provides a set of sequences for which there is prior information suggesting they may
+#'  truly exist, i.e. are not errors. The abundance p-value of dereplicated sequences that exactly match one
+#'  of the priors are calculated without conditioning on presence, allowing singletons to be detected,
+#'  and are compared to a reduced threshold `OMEGA_P` when forming new partitions.
 #'   
 #' @param multithread (Optional). Default is FALSE.
 #'  If TRUE, multithreading is enabled and the number of available threads is automatically determined.   
 #'  If an integer is provided, the number of threads to use is set by passing the argument on to
 #'  \code{\link{setThreadOptions}}.
 #'   
+#' @param verbose (Optional). Default TRUE. 
+#'  Print verbose text output. More fine-grained control is available by providing an integer argument.
+#' \itemize{ 
+#'  \item{0: Silence. No text output (same as FALSE). }
+#'  \item{1: Basic text output (same as TRUE). }
+#'  \item{2: Detailed text output, mostly intended for debugging. }
+#' }
+#'  
 #' @param ... (Optional). All dada_opts can be passed in as arguments to the dada() function.
 #'  See \code{\link{setDadaOpt}} for a full list and description of these options. 
 #'
@@ -79,7 +106,7 @@ assign("HOMOPOLYMER_GAP_PENALTY", NULL, envir = dada_opts)
 #' 
 #' Briefly, \code{dada} implements a statistical test for the notion that a specific sequence was seen too many times
 #'  to have been caused by amplicon errors from currently inferred sample sequences. Overly-abundant
-#'  sequences are used as the seeds of new clusters of sequencing reads, and the final set of clusters
+#'  sequences are used as the seeds of new partitions of sequencing reads, and the final set of partitions
 #'  is taken to represent the denoised composition of the sample. A more detailed explanation of the algorithm
 #'  is found in two publications:
 #' 
@@ -106,9 +133,11 @@ assign("HOMOPOLYMER_GAP_PENALTY", NULL, envir = dada_opts)
 #' @export
 #'
 #' @examples
-#' derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
-#' derep2 = derepFastq(system.file("extdata", "sam2F.fastq.gz", package="dada2"))
-#' dada(derep1, err=tperr1)
+#' fn1 <- system.file("extdata", "sam1F.fastq.gz", package="dada2")
+#' fn2 <- system.file("extdata", "sam2F.fastq.gz", package="dada2")
+#' derep1 = derepFastq(fn1)
+#' derep2 = derepFastq(fn2)
+#' dada(fn1, err=tperr1)
 #' dada(list(sam1=derep1, sam2=derep2), err=tperr1, selfConsist=TRUE)
 #' dada(derep1, err=inflateErr(tperr1,3), BAND_SIZE=32, OMEGA_A=1e-20)
 #'
@@ -117,7 +146,9 @@ dada <- function(derep,
                  errorEstimationFunction = loessErrfun,
                  selfConsist = FALSE, 
                  pool = FALSE,
-                 multithread = FALSE, ...) {
+                 priors = character(0),
+                 multithread = FALSE, 
+                 verbose=TRUE, ...) {
   
   call <- sys.call(1)
   # Read in default opts and then replace with any that were passed in to the function
@@ -131,80 +162,59 @@ dada <- function(derep,
     }
   }
   
-  # If a single derep object, make into a length 1 list
-  if(class(derep) == "derep") { derep <- list(derep) }
-  if(!is.list.of(derep, "derep")) { stop("The derep argument must be a derep-class object or list of derep-class objects.") }
-  if(opts$USE_QUALS && any(is.null(lapply(derep, function(x) x$quals)))) { stop("The input derep-class object(s) must include quals if USE_QUALS is TRUE.") }
+  # Parse verbose
+  if(is.logical(verbose)) {
+    if(verbose == FALSE) { verbose <- 0 }
+    else { verbose <- 1 }
+  }
   
-  # Validate derep object(s)
-  for(i in seq_along(derep)) {
-    if(!(is.integer(derep[[i]]$uniques))) {
-      stop("Invalid derep$uniques vector. Must be integer valued.")
+  # Validate the derep argument. If a single derep object, make into a length 1 list
+  if(is(derep, "derep")) { derep <- list(derep) }
+  if(!(is.list.of(derep, "derep") || is(derep, "character"))) { stop("The derep argument must be derep-class object, list of derep-class objects, or a character vector of fastq files or a directory containing fastq files.") }
+  if(is.character(derep)) { 
+    if(length(derep) == 1 && dir.exists(derep)) { derep <- parseFastqDirectory(derep) }
+    if(!all(file.exists(derep))) {
+      stop("Some of the filenames provided do not exist. This may have happened because some samples had zero reads after filtering.")
     }
-    if(!(all(C_isACGT(names(derep[[i]]$uniques))))) {
-      stop("Invalid derep$uniques vector. Names must be sequences made up only of A/C/G/T.")
-    }
+    if(is.null(names(derep))) { names(derep) <- basename(derep) } # If unnamed vector of filenames provided
   }
-
-  # Validate quals matrix(es)
-  qmax <- 0
-  if(opts$USE_QUALS) {
-    for(i in seq_along(derep)) {
-      if(nrow(derep[[i]]$quals) != length(derep[[i]]$uniques)) {
-        stop("derep$quals matrices must have one row for each derep$unique sequence.")
-      }
-      if(any(sapply(names(derep[[i]]$uniques), nchar) > ncol(derep[[i]]$quals))) { ###ITS
-        stop("derep$quals matrices must have as many columns as the length of the derep$unique sequences.")
-      }
-      if(any(sapply(seq(nrow(derep[[i]]$quals)), 
-                    function(row) any(is.na(derep[[i]]$quals[row,1:nchar(names(derep[[i]]$uniques)[[row]])]))))) { ###ITS
-        stop("NAs in derep$quals matrix. Check that all input sequences had valid associated qualities assigned.")
-      }
-      if(min(derep[[i]]$quals, na.rm=TRUE) < 0) {
-        stop("Invalid derep$quals matrix. Quality values must be positive integers.")
-      }
-      qmax <- max(qmax, max(derep[[i]]$quals, na.rm=TRUE))
-    }
-  }
-
-  qmax <- ceiling(qmax) # Only getting averages from derep$quals
-  if(qmax > 45) {
-    if(qmax > 62) {
-      stop("derep$quals matrix has an invalid maximum Phred Quality Scores of ", qmax) 
-    }
-    warning("derep$quals matrix has Phred Quality Scores >45. For Illumina 1.8 or earlier, this is unexpected.")
-  }
+  
+  # Get prior sequences
+  priors <- getSequences(priors)
   
   # Pool the derep objects if so indicated
+  pseudo <- FALSE; pseudo_priors <- character(0)
   if(length(derep) <= 1) { pool <- FALSE }
-  if(pool) { # Make derep a length 1 list of pooled derep object
-    derep.in <- derep
-    derep <- list(combineDereps2(derep))
-  }
+  if(is.logical(pool)) {
+    if(pool) { # Make derep a length 1 list of pooled derep object
+      derep.in <- getDerep(derep)
+      derep <- list(combineDereps2(derep.in))
+    }
+  } else if(is.character(pool) && pool == "pseudo") {
+    pool <- FALSE
+    pseudo <- TRUE
+  } else { stop("Invalid pool argument.") }
   
   # Validate err matrix
   initializeErr <- FALSE
-  if(is.null(err) && selfConsist) {
+  if(selfConsist && (missing(err) || is.null(err))) {
+    err <- NULL
     initializeErr <- TRUE
   } else {
     err <- getErrors(err, enforce=TRUE)
-    if(ncol(err) < qmax+1) { # qmax = 0 if USE_QUALS = FALSE
-      message("The supplied error matrix does not extend to maximum observed Quality Scores in derep (", qmax, ").
-  Extending error rates by repeating the last column of the Error Matrix (column ", ncol(err), ").
-  In selfConsist mode this should converge to the proper error rates, otherwise this may not be what you want.")
-      for (q in seq(ncol(err), qmax)) { 
-        err <- cbind(err, err[1:16, q])
-        colnames(err)[q+1] <- q
-      }
-    }
   }
-
-  # Might want to check for summed transitions from NT < 1 also.
+  
+  # Validate OMEGA parameters
+  if(opts$OMEGA_A < 0 || opts$OMEGA_A >= 1) stop("OMEGA_A must be between zero and one.")
+  if(opts$OMEGA_P < 0 || opts$OMEGA_P >= 1) stop("OMEGA_P must be between zero and one.")
+  if(opts$OMEGA_P < opts$OMEGA_A && length(priors) > 0) warning("OMEGA_P should generally be larger than OMEGA_A.")
+  if(opts$OMEGA_C > 1e-10 && selfConsist) warning("Strict error correction (OMEGA_C < 1e-10) is not recommended when learning error rates.")
+  if(opts$OMEGA_C >= 1 && selfConsist) stop("Some error correction required when learning error rates.")
   
   # Validate errorEstimationFunction
   if(!opts$USE_QUALS) {
-    if(!missing(errorEstimationFunction)) message("The errorEstimationFunction argument is ignored when USE_QUALS is FALSE.")
-    errorEstimationFunction <- NULL  # NULL error function has different meaning depending on USE_QUALS
+    if(!missing(errorEstimationFunction) && verbose) message("The errorEstimationFunction argument is ignored when USE_QUALS is FALSE.")
+    errorEstimationFunction <- noqualErrfun  # NULL error function has different meaning depending on USE_QUALS
   } else {
     if(!is.function(errorEstimationFunction)) stop("Must provide a function for errorEstimationFunction.")
   }
@@ -220,13 +230,8 @@ dada <- function(derep,
     opts$VECTORIZED_ALIGNMENT <- FALSE # No homopolymer gapping in vectorized aligner
   }
   if(opts$VECTORIZED_ALIGNMENT) {
-    if(length(unique(diag(opts$SCORE)))!=1 || 
-           length(unique(opts$SCORE[upper.tri(opts$SCORE) | lower.tri(opts$SCORE)]))!=1) {
-      message("The vectorized aligner requires that the score matrix reduces to match/mismatch. Turning off vectorization.")
-      opts$VECTORIZED_ALIGNMENT=FALSE
-    }
     if(opts$BAND_SIZE > 0 && opts$BAND_SIZE<8) {
-      message("The vectorized aligner is slower for very small band sizes.")
+      if(verbose) message("The vectorized aligner is slower for very small band sizes.")
     }
     if(opts$BAND_SIZE == 0) opts$VECTORIZED_ALIGNMENT=FALSE
   }
@@ -238,7 +243,7 @@ dada <- function(derep,
     RcppParallel::setThreadOptions(numThreads = multithread)
     multithread <- TRUE
   } else {
-    warning("Invalid multithread parameter. Running as a single thread.")
+    if(verbose) message("Invalid multithread parameter. Running as a single thread.")
     multithread <- FALSE
   }
 
@@ -254,50 +259,97 @@ dada <- function(derep,
     birth_subs <- list()
     trans <- list()
     map <- list()
-#    exp <- list()
+    pval <- list()
     prev <- cur
     if(nconsist > 0) errs[[nconsist]] <- err
 
     for(i in seq_along(derep)) {
-      if(!opts$USE_QUALS) { qi <- matrix(0, nrow=0, ncol=0) }
-      else { qi <- unname(t(derep[[i]]$quals)) } # Need transpose so that sequences are columns
-
-      if(nconsist == 1) {
-        if(pool) {
-          cat(length(derep.in), "samples were pooled:", sum(derep[[i]]$uniques), "reads in", length(derep[[i]]$uniques), "unique sequences.\n")
-        } else {
-          cat("Sample", i, "-", sum(derep[[i]]$uniques), "reads in", length(derep[[i]]$uniques), "unique sequences.\n")
+      drpi <- getDerep(derep[[i]])
+      # Validate dereplicated sequences
+      if(!all(C_isACGT(names(drpi$uniques)))) {
+        stop("Invalid derep$uniques vector. Sequences must be made up only of A/C/G/T.")
+      }
+      # Validate quals matrix
+      if(opts$USE_QUALS) {
+        if(is.null(drpi$quals)) { 
+          stop("The input derep-class object(s) must include quals if USE_QUALS is TRUE.")
         }
-      } else if(i==1) {
+        if(nrow(drpi$quals) != length(drpi$uniques)) {
+          stop("derep$quals matrices must have one row for each derep$unique sequence.")
+        }
+        if(any(sapply(names(drpi$uniques), nchar) > ncol(drpi$quals))) { ###ITS
+          stop("derep$quals matrices must have as many columns as the length of the derep$unique sequences.")
+        }
+        if(any(sapply(seq(nrow(drpi$quals)), 
+                      function(row) any(is.na(drpi$quals[row,1:nchar(names(drpi$uniques)[[row]])]))))) { ###ITS
+          stop("NAs in derep$quals matrix. Check that all input sequences had valid associated qualities assigned.")
+        }
+        if(min(drpi$quals, na.rm=TRUE) < 0) {
+          stop("Invalid derep$quals matrix. Quality values must be positive integers.")
+        }
+        qmax <- ceiling(max(drpi$quals, na.rm=TRUE))
+        if(qmax > 250) { stop("Sample ", i, " has an invalid maximum Phred Quality Scores of ", qmax) }
+      } else { 
+        qmax <- 0 # For USE_QUALS=FALSE
+      }
+
+      # Initialize error matrix if necessary
+      if(initializeErr) {
+        erri <- matrix(1, nrow=16, ncol=max(41,qmax+1))
+      } else {
+        erri <- err
+      }
+      # Extend the error model if the data has higher quality scores in it than the provided error matrix
+      if(ncol(erri) < qmax+1) { # qmax = 0 if USE_QUALS = FALSE
+        if(verbose) {
+          message("The supplied error matrix does not extend to maximum observed Quality Scores in sample ", i, "(q=", qmax, ").
+                       Extending the error model by repeating the last column of the Error Matrix (column ", ncol(err), ").
+                       In selfConsist mode this should converge to the proper error rates, otherwise this may not be what you want.")
+        }
+        for (q in seq(ncol(erri), qmax)) { 
+          erri <- cbind(erri, erri[1:16, q])
+          colnames(erri)[q+1] <- q
+        }
+      }
+      
+      # Verbose progress reporting      
+      if(nconsist == 1 && verbose) {
+        if(selfConsist) {
+          if(i==1) cat("selfConsist step 1 ")
+          cat(".")
+        } else if(pool) {
+          cat(length(derep.in), "samples were pooled:", sum(drpi$uniques), "reads in", 
+              length(drpi$uniques), "unique sequences.\n")
+        } else {
+          cat("Sample", i, "-", sum(drpi$uniques), "reads in", 
+              length(drpi$uniques), "unique sequences.\n")
+        }
+      } else if(i==1 && verbose) {
         if(nconsist == 0) {
           cat("Initializing error rates to maximum possible estimate.\n")
         } else {
-          cat("   selfConsist step", nconsist, "\n")
+          cat("\n   selfConsist step", nconsist)
         }
       }
-      # Initialize error matrix if necessary
-      if(initializeErr) {
-        if(opts$USE_QUALS) {
-          err <- matrix(1, nrow=16, ncol=max(41,qmax+1))
-        } else {
-          err <- matrix(1, nrow=16, ncol=1)
-        }
-      }
-      res <- dada_uniques(names(derep[[i]]$uniques), unname(derep[[i]]$uniques), 
-                          err, ###!
-                          qi, 
-                          opts[["SCORE_MATRIX"]], opts[["GAP_PENALTY"]],
+      
+      res <- dada_uniques(names(drpi$uniques), unname(drpi$uniques), names(drpi$uniques) %in% c(priors, pseudo_priors),
+                          erri,
+                          unname(t(drpi$quals)), # Transpose so that sequences are columns
+                          opts[["MATCH"]], opts[["MISMATCH"]], opts[["GAP_PENALTY"]],
                           opts[["USE_KMERS"]], opts[["KDIST_CUTOFF"]],
                           opts[["BAND_SIZE"]],
-                          opts[["OMEGA_A"]], 
-                          if(initializeErr) { 1 } else { opts[["MAX_CLUST"]] }, ###!
-                          opts[["MIN_FOLD"]], opts[["MIN_HAMMING"]],
-                          opts[["USE_QUALS"]],
+                          opts[["OMEGA_A"]], opts[["OMEGA_P"]], opts[["OMEGA_C"]], opts[["DETECT_SINGLETONS"]],
+                          if(initializeErr) { 1 } else { opts[["MAX_CLUST"]] },
+                          opts[["MIN_FOLD"]], opts[["MIN_HAMMING"]], opts[["MIN_ABUNDANCE"]],
+                          TRUE, #opts[["USE_QUALS"]],
                           FALSE,
                           opts[["VECTORIZED_ALIGNMENT"]],
                           opts[["HOMOPOLYMER_GAP_PENALTY"]],
                           multithread,
-                          opts[["VERBOSE"]])
+                          (verbose>=2),
+                          opts[["SSE"]],
+                          opts[["GAPLESS"]],
+                          opts[["GREEDY"]])
       
       # Augment the returns
       res$clustering$sequence <- as.character(res$clustering$sequence)
@@ -308,57 +360,56 @@ dada <- function(derep,
       birth_subs[[i]] <- res$birth_subs
       trans[[i]] <- res$subqual
       map[[i]] <- res$map
-#      exp[[i]] <- res$exp
+      pval[[i]] <- res$pval
       rownames(trans[[i]]) <- c("A2A", "A2C", "A2G", "A2T", "C2A", "C2C", "C2G", "C2T", "G2A", "G2C", "G2G", "G2T", "T2A", "T2C", "T2G", "T2T")
-      if(opts$USE_QUALS) colnames(trans[[i]]) <- seq(0, ncol(trans[[i]])-1)  # Assumes C sides is returning one col for each integer starting at 0
+      colnames(trans[[i]]) <- seq(0, ncol(trans[[i]])-1)  # Assumes C sides is returning one col for each integer starting at 0
     }
-    # Accumulate the sub matrix
-    cur <- Reduce("+", trans) # The only thing that changes is err(trans), so this is sufficient
+    # Accumulate the trans matrix
+    cur <- accumulateTrans(trans) # The only thing that changes is err(trans), so this is sufficient to determine convergence
     
     # Estimate the new error model (if applicable)
-    if(opts$USE_QUALS) {
-      if(is.null(errorEstimationFunction)) {
-        err <- NULL
-      } else {
-        err <- tryCatch(suppressWarnings(errorEstimationFunction(cur)),
-                error = function(cond) {
-                  message("Error rates could not be estimated.")
-                  return(NULL)
-        })
-      }
-    } else { # Not using quals, MLE estimate for each transition type
-      err <- cur + 1   # ADD ONE PSEUDOCOUNT TO EACH TRANSITION
-      err[1:4,1] <- err[1:4,1]/sum(err[1:4,1])
-      err[5:8,1] <- err[5:8,1]/sum(err[5:8,1])
-      err[9:12,1] <- err[9:12,1]/sum(err[9:12,1])
-      err[13:16,1] <- err[13:16,1]/sum(err[13:16,1])
+    if(is.null(errorEstimationFunction)) {
+      err <- NULL
+    } else {
+      err <- tryCatch(suppressWarnings(errorEstimationFunction(cur)),
+              error = function(cond) {
+                if(selfConsist || verbose >= 2) {
+                  message("Error rates could not be estimated (this is usually because of very few reads).")
+                }
+                return(NULL)
+      })
+    }
+    if(selfConsist) { # Validate err matrix
+      temp.var <- getErrors(err, enforce=TRUE); rm("temp.var")
     }
     if(initializeErr) {
       initializeErr <- FALSE
       err[c(1,6,11,16),] <- 1.0 # Set self-transitions (A2A, C2C, G2G, T2T) to max of 1
     }
 
-    if(selfConsist) { # Validate err matrix
-      if(!is.numeric(err)) stop("Error matrix returned by errorEstimationFunction not numeric.")
-      if(!(nrow(err)==16)) stop("Error matrix returned by errorEstimationFunction does not have 16 rows.")
-      if(!all(err>=0)) stop("Error matrix returned by errorEstimationFunction has entries <0.")
-      if(!all(err<=1)) stop("Error matrix returned by errorEstimationFunction has entries >1.")
-      if(any(err==0)) warning("Error matrix returned by errorEstimationFunction has 0s in some entries.")      
-    }
-    
     # Termination condition for selfConsist loop
     if((!selfConsist) || any(sapply(errs, identical, err)) || (nconsist >= opts$MAX_CONSIST)) {
-      break
-    } 
+      if(!pseudo || (pseudo && nconsist >= 2)) { # If pseudo, must go through first (full) loop to get pseudo priors
+        break
+      }
+    }
+    
+    # Get pseudo priors
+    if(pseudo && nconsist >= 1) { # Don't bother if nconsist=0, i.e. max error init
+      st <- makeSequenceTable(clustering)
+      pseudo_priors <- colnames(st)[colSums(st>0) >= opts$PSEUDO_PREVALENCE | colSums(st) >= opts$PSEUDO_ABUNDANCE]
+      rm(st)
+    }
+    
     nconsist <- nconsist+1
   } # repeat
 
-  cat("\n")
-  if(selfConsist) {
+  if(selfConsist && verbose) {
+    cat("\n")
     if(nconsist >= opts$MAX_CONSIST) {
-      warning("Self-consistency loop terminated before convergence.")
+      message("Self-consistency loop terminated before convergence.")
     } else {
-      cat("\nConvergence after ", nconsist, " rounds.\n")
+      cat("Convergence after ", nconsist, " rounds.\n")
     }
   }
   
@@ -366,7 +417,7 @@ dada <- function(derep,
   # A single dada-class object if one derep object provided.
   # A list of dada-class objects if multiple derep objects provided.
   rval2 = replicate(length(derep), list(denoised=NULL, clustering=NULL, sequence=NULL, quality=NULL, birth_subs=NULL, trans=NULL, map=NULL,
-                                        err_in=NULL, err_out=NULL, opts=NULL, call=NULL), simplify=FALSE)
+                                        err_in=NULL, err_out=NULL, opts=NULL), simplify=FALSE)
   for(i in seq_along(derep)) {
     rval2[[i]]$denoised <- getUniques(clustering[[i]])
     rval2[[i]]$clustering <- clustering[[i]]
@@ -375,7 +426,7 @@ dada <- function(derep,
     rval2[[i]]$birth_subs <- birth_subs[[i]]
     rval2[[i]]$trans <- trans[[i]]
     rval2[[i]]$map <- map[[i]]
-#    rval2[[i]]$exp <- exp[[i]]
+    rval2[[i]]$pval <- pval[[i]]
     # Return the error rate(s) used as well as the final estimated error matrix
     if(selfConsist) { # Did a self-consist loop
       rval2[[i]]$err_in <- errs
@@ -384,9 +435,8 @@ dada <- function(derep,
     }
     rval2[[i]]$err_out <- err
     
-    # Store the call and the options that were used in the return object
+    # Store the options that were used in the return object
     rval2[[i]]$opts <- opts
-    rval2[[i]]$call <- call
   }
 
   # If pool=TRUE, expand the rval and prune the individual return objects
@@ -394,7 +444,7 @@ dada <- function(derep,
     # Expand rval into a list of the proper length
     rval1 <- rval2[[1]]
     rval2 = replicate(length(derep.in), list(denoised=NULL, clustering=NULL, sequence=NULL, quality=NULL, birth_subs=NULL, trans=NULL, map=NULL,
-                                          err_in=NULL, err_out=NULL, opts=NULL, call=NULL), simplify=FALSE)
+                                          err_in=NULL, err_out=NULL, opts=NULL), simplify=FALSE)
     # Make map named by the pooled unique sequence
     map <- map[[1]]
     names(map) <- names(derep[[1]]$uniques)
@@ -415,6 +465,7 @@ dada <- function(derep,
       rval2[[i]]$birth_subs$clust <- newBi[rval2[[i]]$birth_subs$clust]      
       # Remap $map
       rval2[[i]]$map <- newBi[map[names(derep.in[[i]]$uniques)]]
+      # Would need to add $pval back in here
       # Recalculate abundances (both $denoised and $clustering$abundance)
       rval2[[i]]$denoised[] <- tapply(derep.in[[i]]$uniques, rval2[[i]]$map, sum)
       rval2[[i]]$clustering$abundance <- rval2[[i]]$denoised
@@ -447,14 +498,45 @@ dada <- function(derep,
 #'  
 #' @return NULL.  
 #'  
-#' @details The various dada options...
+#' @details
+#' 
+#' **Sensitivity**
 #' 
 #' OMEGA_A: This parameter sets the threshold for when DADA2 calls unique sequences significantly overabundant, and therefore creates a
-#'  new cluster with that sequence as the center. Default is 1e-40, which is a conservative setting to avoid making false
+#'  new partition with that sequence as the center. Default is 1e-40, which is a conservative setting to avoid making false
 #'  positive inferences, but which comes at the cost of reducing the ability to identify some rare variants.
 #' 
-#' USE_QUALS: If TRUE, the dada(...) error model takes into account the consensus quality score of the dereplicated unique sequences.
-#'  If FALSE, quality scores are ignored. Default is TRUE.
+#' OMEGA_P: The threshold for unique sequences with prior evidence of existence (see `priors` argument). Default is 1e-4.
+#' 
+#' OMEGA_C: The threshold at which unique sequences inferred to contain errors are corrected in the final output. 
+#' The probability that each unique sequence
+#'  is generated at its observed abundance from the center of its final partition is evaluated, and compared to OMEGA_C. If that
+#'  probability is >= OMEGA_C, it is "corrected", i.e. replaced by the partition center sequence. The special value of 0 corresponds
+#'  to correcting all input sequences, and any value > 1 corresponds to performing no correction on sequences found to contain
+#'  errors. Default is 1e-40 (same as OMEGA_A).
+#' 
+#' DETECT_SINGLETONS: If set to TRUE, this removes the requirement for at least two reads with the same sequences to exist
+#'  in order for a new ASV to be detected. It also somewhat increases sensitivity to other low abundance sequences as well, 
+#'  e.g. those present in just 2/3/4/... reads. Note, this applies to all unique sequences, not just those supported by
+#'  prior evidence (see `priors` argument), and so it does make false-positive detections more likely.
+#' 
+#' **Alignment**
+#' 
+#' MATCH: The score of a match in the Needleman-Wunsch alignment. Default is 4.
+#'  
+#' MISMATCH: The score of a mismatch in the Needleman-Wunsch alignment. Default is -5.
+#'  
+#' GAP_PENALTY: The cost of gaps in the Needleman-Wunsch alignment. Default is -8.
+#'  
+#' HOMOPOLYMER_GAP_PENALTY: The cost of gaps in homopolymer regions (>=3 repeated bases). Default is NULL, which causes homopolymer
+#'  gaps to be treated as normal gaps.  
+#'  
+#' BAND_SIZE: When set, banded Needleman-Wunsch alignments are performed. Banding restricts the net cumulative number of insertion
+#'  of one sequence relative to the other. The default value of BAND_SIZE is 16. If DADA is applied to sequencing technologies with 
+#'  high rates of indels, such as 454 sequencing, the BAND_SIZE parameter should be increased. Setting BAND_SIZE to a negative number
+#'  turns off banding (i.e. full Needleman-Wunsch).
+#' 
+#' **Sequence Comparison Heuristics**
 #' 
 #' USE_KMERS: If TRUE, a 5-mer distance screen is performed prior to performing each pairwise alignment, and if the 5mer-distance
 #'  is greater than KDIST_CUTOFF, no alignment is performed. Default is TRUE.
@@ -464,33 +546,61 @@ dada <- function(derep,
 #'  amount cannot be linked by amplicon errors (i.e. if you sequence one, you won't get a read of other) and so
 #'  careful (and costly) alignment is unnecessary.
 #' 
-#' BAND_SIZE: When set, banded Needleman-Wunsch alignments are performed. Banding restricts the net cumulative number of insertion
-#'  of one sequence relative to the other. The default value of BAND_SIZE is 16. If DADA is applied to marker genes with high rates
-#'  of indels, such as the ITS region in fungi, the BAND_SIZE parameter should be increased. Setting BAND_SIZE to a negative number
-#'  turns off banding (i.e. full Needleman-Wunsch).
+#' GAPLESS: If TRUE, the ordered kmer identity between pairs of sequences is compared to their unordered
+#'  overlap. If equal, the optimal alignment is assumed to be gapless. Default is TRUE.
+#'  Only relevant if USE_KMERS is TRUE.
 #' 
-#' SCORE_MATRIX: The score matrix for the Needleman-Wunsch alignment. This is a 4x4 matrix as no ambiguous nucleotides
-#'  are allowed. Default is nuc44: -4 for mismatches, +5 for matches.
-#'  
-#' GAP_PENALTY: The cost of gaps in the Needleman-Wunsch alignment. Default is -8.
-#'  
-#' HOMOPOLYMER_GAP_PENALTY: The cost of gaps in homopolymer regions (>=3 repeated bases). Default is NULL, which causes homopolymer
-#'  gaps to be treated as normal gaps.  
-#'  
-#' MIN_FOLD: The minimum fold-overabundance for sequences to form new clusters. Default value is 1, which means this
+#' GREEDY: The DADA2 algorithm is not greedy, but a very restricted form of greediness can be turned
+#'  on via this option. If TRUE, unique sequences with reads less than those expected to be generated
+#'  by resequencing just the central unique in their partition are "locked" to that partition.
+#'  Modest (~30\%) speedup, and almost no impact on output. Default is TRUE.
+#' 
+#' **New Partition Conditions**
+#' 
+#' MIN_FOLD: The minimum fold-overabundance for sequences to form new partitions. Default value is 1, which means this
 #'  criteria is ignored.
 #'  
-#' MIN_HAMMING: The minimum hamming-separation for sequences to form new clusters. Default value is 1, which means this
+#' MIN_HAMMING: The minimum hamming-separation for sequences to form new partitions. Default value is 1, which means this
 #'  criteria is ignored.
 #'
-#' MAX_CLUST: The maximum number of clusters. Once this many clusters have been created, the algorithm terminates regardless
+#' MIN_ABUNDANCE: The minimum abundance for unique sequences form new partitions. Default value is 1, which means this
+#'  criteria is ignored.
+#'
+#' MAX_CLUST: The maximum number of partitions. Once this many partitions have been created, the algorithm terminates regardless
 #'  of whether the statistical model suggests more real sequence variants exist. If set to 0 this argument is ignored. Default
 #'  value is 0.
-#'  
+#'
+#' **Self Consistency**
+#' 
 #' MAX_CONSIST: The maximum number of steps when selfConsist=TRUE. If convergence is not reached in MAX_CONSIST steps,
 #'  the algorithm will terminate with a warning message. Default value is 10.
 #'  
-#' VERBOSE: If TRUE progress messages from the algorithm are printed. Warning: There is a lot of output. Default is FALSE.
+#' **Pseudo-pooling Behavior**
+#'  
+#' PSEUDO_PREVALENCE: When performing pseudo-pooling, all sequence variants found in at least this many
+#'  samples are used as priors for a subsequent round of sample inference. 
+#'  Only relevant if `pool="pseudo"`. Default is 2.
+#' 
+#' PSEUDO_ABUNDANCE: When performing pseudo-pooling, all denoised sequence variants with total
+#'  abundance (over all samples) greater than this are used as priors for a subsequent round 
+#'  of sample inference.
+#'  Only relevant if `pool="pseudo"`. Default is Inf (i.e. abundance ignored for this purpose).
+#' 
+#' **Error Model**
+#' 
+#' USE_QUALS: If TRUE, the dada(...) error model takes into account the consensus quality score of the dereplicated unique sequences.
+#'  If FALSE, quality scores are ignored. Default is TRUE.
+#' 
+#' **Technical**
+#' 
+#' SSE: Controls the level of explicit SSE vectorization for kmer calculations. Default 2. Maintained for development reasons,
+#'    should have no impact on output.   
+#'      
+#' \itemize{ 
+#'  \item{0: No explicit vectorization (but modern compilers will auto-vectorize the code).}
+#'  \item{1: Explicit SSE2. }
+#'  \item{2: Explicit, packed SSE2 using 8-bit integers. Slightly faster than SSE=1. }
+#' }
 #' 
 #' @seealso 
 #'  \code{\link{getDadaOpt}}
@@ -499,35 +609,30 @@ dada <- function(derep,
 #'
 #' @examples
 #' setDadaOpt(OMEGA_A = 1e-20)
-#' setDadaOpt(OMEGA_A = 1e-20, VERBOSE = TRUE)
+#' setDadaOpt(MATCH=1, MISMATCH=-4, GAP_PENALTY=-6)
+#' setDadaOpt(GREEDY=TRUE, GAPLESS=TRUE)
 #'   
 setDadaOpt <- function(...) {
   opts <- getDadaOpt()
   args <- list(...)
+  if(length(args)==1 && is.list(args[[1]])) { # Arguments were passed in as a list, as returned by getDadaOpt
+    args <- args[[1]]
+  }
   for(opnm in names(args)) {
-    if(opnm %in% names(opts)) {
-      if(class(getDadaOpt(opnm)) != class(args[[opnm]])) {
-        warning(paste0(opnm, " not set, value provided has different class (", class(args[[opnm]]), 
-                    ") then current option value (", class(getDadaOpt(opnm)), ")"))
-      } else {
+    if(opnm %in% names(opts)) { # class() OK here, since all dada-opts are simple objects with single classes
+      if( (class(getDadaOpt(opnm)) == class(args[[opnm]])) ||
+         (opnm == "HOMOPOLYMER_GAP_PENALTY" && # Allow numeric or NULL for HOMOPOLYMER_GAP_PENALTY
+          (is.numeric(args[["HOMOPOLYMER_GAP_PENALTY"]])) || is.null(args[["HOMOPOLYMER_GAP_PENALTY"]])) ) {
         assign(opnm, args[[opnm]], envir=dada_opts)
+      } else {
+        warning(paste0(opnm, " not set, value provided has different class (", class(args[[opnm]]), 
+                       ") then current option value (", class(getDadaOpt(opnm)), ")"))
       }
     } else {
       warning(opnm, " is not a valid DADA option.")
     }
   }
 }
-
-# Should add in more sanity checking here??
-# matrix dimensions, general structure of score matrix
-#  if(!(is.numeric(score) && dim(err) == c(4,4))) {
-#    stop("dada: Invalid score matrix.")
-#  }
-#  
-#  if(!(is.numeric(gap_penalty) && gap_penalty <=0)) {
-#    stop("dada: Invalid gap penalty.")
-#  }
-#  if(gap_penalty > -1) warning("dada: Very small gap penalty.")
 
 ################################################################################
 #' Get DADA options

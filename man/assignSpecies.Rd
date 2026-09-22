@@ -4,11 +4,18 @@
 \alias{assignSpecies}
 \title{Taxonomic assignment to the species level by exact matching.}
 \usage{
-assignSpecies(seqs, refFasta, allowMultiple = FALSE, verbose = FALSE)
+assignSpecies(
+  seqs,
+  refFasta,
+  allowMultiple = FALSE,
+  tryRC = FALSE,
+  n = 2000,
+  verbose = FALSE
+)
 }
 \arguments{
 \item{seqs}{(Required). A character vector of the sequences to be assigned, or an object 
-coercible by \code{\link{getUniques}}.}
+coercible by \code{\link{getUniques}}. Sequences must be A/C/G/T only.}
 
 \item{refFasta}{(Required). The path to the reference fasta file, or an 
 R connection. Can be compressed.
@@ -24,6 +31,14 @@ By default only unambiguous identifications are return. If TRUE, a concatenated 
 of all exactly matched species is returned. If an integer is provided, multiple
 identifications up to that many are returned as a concatenated string.}
 
+\item{tryRC}{(Optional). Default FALSE. 
+If TRUE, the reverse-complement of each sequences will also be tested for exact matching 
+to the reference sequences.}
+
+\item{n}{(Optional). Default \code{2000}.
+The number of sequences to perform assignment on at one time. 
+This controls the peak memory requirement so that large numbers of sequences are supported.}
+
 \item{verbose}{(Optional). Default FALSE.
 If TRUE, print status to standard output.}
 }
@@ -37,8 +52,8 @@ A two-column character matrix. Rows correspond to the provided sequences,
 genus-species binomial classification of the input sequences.
 }
 \examples{
-\dontrun{
- taxa <- assignSpecies(dadaF, "rdp_species.fa.gz")
-}
+seqs <- getSequences(system.file("extdata", "example_seqs.fa", package="dada2"))
+species_fasta <- system.file("extdata", "example_species_assignment.fa.gz", package="dada2")
+spec <- assignSpecies(seqs, species_fasta)
 
 }

@@ -4,18 +4,33 @@
 \alias{learnErrors}
 \title{Learns the error rates from an input list, or vector, of file names or a list of \code{\link{derep-class}} objects.}
 \usage{
-learnErrors(fls, nreads = 1e+06, errorEstimationFunction = loessErrfun,
-  multithread = FALSE, randomize = FALSE, MAX_CONSIST = 10, ...)
+learnErrors(
+  fls,
+  nbases = 1e+08,
+  nreads = NULL,
+  errorEstimationFunction = loessErrfun,
+  multithread = FALSE,
+  randomize = FALSE,
+  MAX_CONSIST = 10,
+  OMEGA_C = 0,
+  qualityType = "Auto",
+  verbose = FALSE,
+  ...
+)
 }
 \arguments{
 \item{fls}{(Required). \code{character}.
-The file path(s) to the fastq, fastq.gz file(s), or any file format supported by \code{\link[ShortRead]{FastqStreamer}}.
-A list of derep-class ojects can also be provided.}
+The file path(s) to the fastq file(s), or a directory containing fastq file(s).
+Compressed file formats such as .fastq.gz and .fastq.bz2 are supported.
+A list of \code{\link{derep-class}} ojects can also be provided.}
 
-\item{nreads}{(Optional). Default 1e6.
-The minimum number of reads to use for error rate learning. Samples are read into memory
-until at least this number of reads has been reached, or all provided samples have been
+\item{nbases}{(Optional). Default 1e8.
+The minimum number of total bases to use for error rate learning. Samples are read into memory
+until at least this number of total bases has been reached, or all provided samples have been
 read in.}
+
+\item{nreads}{(Optional). Default NULL. DEPRECATED.
+Please update your code to use the nbases parameter.}
 
 \item{errorEstimationFunction}{(Optional). Function. Default \code{\link{loessErrfun}}.
 
@@ -35,6 +50,27 @@ If TRUE, samples are picked at random from those provided.}
 The maximum number of times to step through the self-consistency loop. If convergence was not
 reached in MAX_CONSIST steps, the estimated error rates in the last step are returned.}
 
+\item{OMEGA_C}{(Optional). Default 0.
+The threshold at which unique sequences inferred to contain errors are corrected in the final output,
+ and used to estimate the error rates (see more at \code{\link{setDadaOpt}}). For reasons of convergence,
+ and because it is more conservative, it is recommended to set this value to 0, which means that all
+ reads are counted and contribute to estimating the error rates.}
+
+\item{qualityType}{(Optional). \code{character(1)}.
+The quality encoding of the fastq file(s). "Auto" (the default) means to
+attempt to auto-detect the encoding. This may fail for PacBio files with
+uniformly high quality scores, in which case use "FastqQuality". This
+parameter is passed on to \code{\link[ShortRead]{readFastq}}; see
+information there for details.}
+
+\item{verbose}{(Optional). Default TRUE 
+ Print verbose text output. More fine-grained control is available by providing an integer argument.
+\itemize{ 
+ \item{0: Silence. No text output (same as FALSE).}
+ \item{1: Basic text output (same as TRUE). }
+ \item{2: Detailed text output, mostly intended for debugging. }
+}}
+
 \item{...}{(Optional). Additional arguments will be passed on to the \code{\link{dada}} function.}
 }
 \value{
@@ -53,7 +89,7 @@ Error rates are learned by alternating between sample inference and error rate e
  fl1 <- system.file("extdata", "sam1F.fastq.gz", package="dada2")
  fl2 <- system.file("extdata", "sam2F.fastq.gz", package="dada2")
  err <- learnErrors(c(fl1, fl2))
- err <- learnErrors(c(fl1, fl2), nreads=50000, randomize=TRUE)
+ err <- learnErrors(c(fl1, fl2), nbases=5000000, randomize=TRUE)
  # Using a list of derep-class objects
  dereps <- derepFastq(c(fl1, fl2))
  err <- learnErrors(dereps, multithread=TRUE, randomize=TRUE, MAX_CONSIST=20)

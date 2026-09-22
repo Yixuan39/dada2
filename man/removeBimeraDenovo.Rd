@@ -4,8 +4,7 @@
 \alias{removeBimeraDenovo}
 \title{Remove bimeras from collections of unique sequences.}
 \usage{
-removeBimeraDenovo(unqs, method = "consensus", tableMethod = NULL, ...,
-  verbose = FALSE)
+removeBimeraDenovo(unqs, method = "consensus", ..., verbose = FALSE)
 }
 \arguments{
 \item{unqs}{(Required). A \code{\link{uniques-vector}} or any object that can be coerced
@@ -22,9 +21,8 @@ into one with \code{\link{getUniques}}. A list of such objects can also be provi
   If "per-sample": The samples in a sequence table are independently checked for bimeras,
      and sequence variants are removed (zeroed-out) from samples independently (\code{\link{isBimeraDenovo}}).}
 
-\item{tableMethod}{(DEPRECATED).}
-
-\item{...}{(Optional). Arguments to be passed to \code{\link{isBimeraDenovo}} or \code{\link{isBimeraDenovoTable}}.}
+\item{...}{(Optional). Arguments to be passed to \code{\link{isBimeraDenovo}} or \code{\link{isBimeraDenovoTable}}.
+The documentation of those methods detail the additional algorithmic parameters that can be adjusted.}
 
 \item{verbose}{(Optional). Default FALSE. 
 Print verbose text output.}
@@ -44,7 +42,7 @@ This function is a convenience interface for chimera removal. Two methods to ide
 derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
 dada1 <- dada(derep1, err=tperr1, errorEstimationFunction=loessErrfun, selfConsist=TRUE)
 out.nobim <- removeBimeraDenovo(dada1)
-out.nobim <- removeBimeraDenovo(dada1$clustering, method="pooled", minFoldParentOverAbundance = 2, allowOneOff=FALSE)
+out.nobim <- removeBimeraDenovo(dada1$clustering, method="pooled", minFoldParentOverAbundance = 2)
 
 }
 \seealso{

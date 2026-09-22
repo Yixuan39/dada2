@@ -4,7 +4,7 @@
 \alias{isPhiX}
 \title{Determine if input sequence(s) match the phiX genome.}
 \usage{
-isPhiX(seqs, wordSize = 16, minMatches = 2, nonOverlapping = TRUE)
+isPhiX(seqs, wordSize = 16, minMatches = 2, nonOverlapping = TRUE, ...)
 }
 \arguments{
 \item{seqs}{(Required). A \code{character} vector of A/C/G/T sequences.}
@@ -18,6 +18,8 @@ The minimum number of words in the input sequences that must match the phiX geno
 
 \item{nonOverlapping}{(Optional). Default TRUE.
 If TRUE, only non-overlapping matching words are counted.}
+
+\item{...}{(Optional). Ignored.}
 }
 \value{
 \code{logical(1)}.
@@ -31,8 +33,8 @@ enough exactly matching words are found, the sequence is flagged.
 \examples{
 derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
 sqs1 <- getSequences(derep1)
-isPhiX(sqs1)
-isPhiX(sqs1, wordSize=20,  minMatches=1)
+is.phi <- isPhiX(sqs1)
+is.phi <- isPhiX(sqs1, wordSize=20,  minMatches=1)
 
 }
 \seealso{

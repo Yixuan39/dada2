@@ -11,7 +11,7 @@ getSequences(object, collapse = FALSE, silence = TRUE)
 
 \item{collapse}{(Optional). Default FALSE.
 Should duplicate sequences detected in \code{object} be collapsed together, thereby
- imposing uniqueness on non-unique input.}
+imposing uniqueness on non-unique input.}
 
 \item{silence}{(Optional). Default TRUE.
 Suppress reporting of the detection and merger of duplicated input sequences.}
@@ -20,17 +20,18 @@ Suppress reporting of the detection and merger of duplicated input sequences.}
 \code{character}. A character vector of the sequences.
 }
 \description{
-This function extracts the unique sequences from several different data objects, including
+This function extracts the sequences from several different data objects, including
  including \code{\link{dada-class}} and \code{\link{derep-class}} objects, as well as 
  \code{data.frame} objects that have both $sequence and $abundance columns. This function 
  wraps the \code{\link{getUniques}} function, but return only the names (i.e. the sequences).
- Can also be provided the file path to a fasta file.
+ Can also be provided the file path to a fasta or fastq file, a taxonomy table, or a
+ DNAStringSet object. Sequences are coerced to upper-case characters.
 }
 \examples{
 derep1 = derepFastq(system.file("extdata", "sam1F.fastq.gz", package="dada2"))
 dada1 <- dada(derep1, err=tperr1)
-getSequences(derep1)
-getSequences(dada1)
-getSequences(dada1$clustering)
+getSequences(derep1)[1:5]
+getSequences(dada1)[1:5]
+getSequences(dada1$clustering)[1:5]
 
 }

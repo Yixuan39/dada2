@@ -4,27 +4,54 @@
 \alias{filterAndTrim}
 \title{Filter and trim fastq file(s).}
 \usage{
-filterAndTrim(fwd, filt, rev = NULL, filt.rev = NULL, compress = TRUE,
-  truncQ = 2, truncLen = 0, trimLeft = 0, maxLen = Inf, minLen = 20,
-  maxN = 0, minQ = 0, maxEE = Inf, rm.phix = TRUE, primer.fwd = NULL,
-  matchIDs = FALSE, id.sep = "\\\\s", id.field = NULL,
-  multithread = FALSE, n = 1e+05, OMP = TRUE, verbose = FALSE)
+filterAndTrim(
+  fwd,
+  filt,
+  rev = NULL,
+  filt.rev = NULL,
+  compress = TRUE,
+  truncQ = 2,
+  truncLen = 0,
+  trimLeft = 0,
+  trimRight = 0,
+  maxLen = Inf,
+  minLen = 20,
+  maxN = 0,
+  minQ = 0,
+  maxEE = Inf,
+  rm.phix = TRUE,
+  rm.lowcomplex = 0,
+  orient.fwd = NULL,
+  matchIDs = FALSE,
+  id.sep = "\\\\s",
+  id.field = NULL,
+  multithread = FALSE,
+  n = 1e+05,
+  OMP = TRUE,
+  qualityType = "Auto",
+  verbose = FALSE
+)
 }
 \arguments{
 \item{fwd}{(Required). \code{character}.
-The path(s) to the input fastq file(s).}
+The file path(s) to the fastq file(s), or the directory containing the fastq file(s). 
+Compressed file formats such as .fastq.gz and .fastq.bz2 are supported.}
 
 \item{filt}{(Required). \code{character}.
-The path(s) to the output filtered file(s) corresponding to the \code{fwd} input files.
+The path(s) to the output filtered file(s) corresponding to the \code{fwd} input files, or a directory
+that will contain those files.
 If containing directory does not exist, it will be created.}
 
 \item{rev}{(Optional). Default NULL.
-The path(s) to the input reverse fastq file(s) from paired-end sequence data corresponding to those
-provided to the \code{fwd} argument. If NULL, the \code{fwd} files are processed as single-reads.}
+The file path(s) to the reverse fastq file(s) from paired-end sequence data corresponding to those
+provided to the \code{fwd} argument, or the directory containing those fastq file(s). 
+Compressed file formats such as .fastq.gz and .fastq.bz2 are supported.
+If NULL, the \code{fwd} files are processed as single-reads.}
 
 \item{filt.rev}{(Optional). Default NULL, but required if \code{rev} is provided.
-The path(s) to the output fastq file(s) corresponding to the \code{rev} input.
-Can also provide a directory, which if not existing will be created (how to differentiate between dir/file in len1 case?).}
+The path(s) to the output filtered file(s) corresponding to the \code{rev} input files, or a directory
+that will contain those files.
+If containing directory does not exist, it will be created.}
 
 \item{compress}{(Optional). Default TRUE.
  If TRUE, the output fastq file(s) are gzipped.
@@ -46,6 +73,10 @@ Truncate reads after \code{truncLen} bases. Reads shorter than this are discarde
 The number of nucleotides to remove from the start of each read. If both \code{truncLen} and 
 \code{trimLeft} are provided, filtered reads will have length \code{truncLen-trimLeft}.}
 
+\item{trimRight}{(Optional). Default 0.
+The number of nucleotides to remove from the end of each read. If both \code{truncLen} and 
+\code{trimRight} are provided, truncation will be performed after \code{trimRight} is enforced.}
+
 \item{maxLen}{(Optional). Default Inf (no maximum).
 Remove reads with length greater than maxLen. maxLen is enforced \strong{before} trimming and truncation.}
 
@@ -66,12 +97,22 @@ Expected errors are calculated from the nominal definition of the quality score:
 \item{rm.phix}{(Optional). Default TRUE.
 If TRUE, discard reads that match against the phiX genome, as determined by \code{\link{isPhiX}}.}
 
-\item{primer.fwd}{(Optional). Default NULL. Paired-read filtering only.
-A character string defining the forward primer. Only allows unambiguous nucleotides. The primer will be
-compared to the first len(primer.fwd) nucleotides at the start of the read. If there is
-not an exact match, the read is filtered out.
-For paired reads, the reverse read is also interrogated, and if the primer is detected on the reverse read,
-the forward/reverse reads are swapped.}
+\item{rm.lowcomplex}{(Optional). Default 0.
+If greater than 0, reads with an effective number of kmers less than this value will be removed.
+The effective number of kmers is determined by \code{\link{seqComplexity}} using a Shannon information
+approximation. The default kmer-size is 2, and therefore perfectly random sequences will approach an
+effective kmer number of 16 = 4 (nucleotides) ^ 2 (kmer size).}
+
+\item{orient.fwd}{(Optional). Default NULL.
+A character string present at the start of valid reads. Only allows unambiguous nucleotides. 
+This string is compared to the start of each read, and the reverse complement of each read.
+If it exactly matches the start of the read, the read is kept.
+If it exactly matches the start of the reverse-complement read, the read is reverse-complemented and kept.
+Otherwise the read if filtered out.
+For paired reads, the string is compared to the start of the forward and reverse reads, and if it matches
+the start of the reverse read the reaads are swapped and kept.
+The primary use of this parameter is to unify the orientation of amplicon sequencing libraries that
+are a mixture of forward and reverse orientations, and that include the forward primer on the reads.}
 
 \item{matchIDs}{(Optional). Default FALSE. Paired-read filtering only.
 Whether to enforce matching between the id-line sequence identifiers of the forward and reverse fastq files.
@@ -92,19 +133,26 @@ If NULL (the default) and matchIDs is TRUE, the function attempts to automatical
  If TRUE, input files are filtered in parallel via \code{\link[parallel]{mclapply}}.
  If an integer is provided, it is passed to the \code{mc.cores} argument of \code{\link[parallel]{mclapply}}.
  Note that the parallelization here is by forking, and each process is loading another fastq file into
- memory. Additionally, this option is ignored under Windows machines, with \code{mc.cores} set to 1.
+ memory. This option is ignored in Windows, as Windows does not support forking, with \code{mc.cores} set to 1.
 If memory is an issue, execute in a clean environment and reduce the chunk size \code{n} and/or
  the number of threads.}
 
 \item{n}{(Optional). Default \code{1e5}.
 The number of records (reads) to read in and filter at any one time. 
 This controls the peak memory requirement so that very large fastq files are supported. 
-See \code{\link{FastqStreamer}} for details.}
+See \code{\link[ShortRead]{FastqStreamer}} for details.}
 
 \item{OMP}{(Optional). Default TRUE.
-Whether or not to use OMP multithreading when calling \code{\link{FastqStreamer}}. Should be set to FALSE if
-calling this function within a parallelized chunk of code.
+Whether or not to use OMP multithreading when calling \code{\link[ShortRead]{FastqStreamer}}. 
+Should be set to FALSE if calling this function within a parallelized chunk of code.
 If \code{multithread=TRUE}, this argument will be coerced to FALSE.}
+
+\item{qualityType}{(Optional). \code{character(1)}.
+The quality encoding of the fastq file(s). "Auto" (the default) means to
+attempt to auto-detect the encoding. This may fail for PacBio files with
+uniformly high quality scores, in which case use "FastqQuality". This
+parameter is passed on to \code{\link[ShortRead]{readFastq}}; see
+information there for details.}
 
 \item{verbose}{(Optional). Default FALSE.
 Whether to output status messages.}
@@ -133,7 +181,7 @@ testFastqs = c(system.file("extdata", "sam1F.fastq.gz", package="dada2"),
                system.file("extdata", "sam2F.fastq.gz", package="dada2"))
 filtFastqs <- c(tempfile(fileext=".fastq.gz"), tempfile(fileext=".fastq.gz"))
 filterAndTrim(testFastqs, filtFastqs, maxN=0, maxEE=2, verbose=TRUE)
-filterAndTrim(testFastqs, filtFastqs, truncQ=2, truncLen=200, rm.phix=TRUE)
+filterAndTrim(testFastqs, filtFastqs, truncQ=2, truncLen=200, rm.phix=TRUE, rm.lowcomplex=8)
 
 }
 \seealso{

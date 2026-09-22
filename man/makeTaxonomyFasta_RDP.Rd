@@ -2,15 +2,25 @@
 % Please edit documentation in R/taxonomy.R
 \name{makeTaxonomyFasta_RDP}
 \alias{makeTaxonomyFasta_RDP}
-\title{This function creates the dada2 assignTaxonomy training fasta for the RDP trainset .fa file}
+\title{This function creates the dada2 assignTaxonomy training fasta from the speciesrank RDP trainset .fa file
+The RDP trainset data was downloaded from: https://sourceforge.net/projects/rdp-classifier/}
 \usage{
-makeTaxonomyFasta_RDP(fin, fdb, fout, compress = TRUE)
+makeTaxonomyFasta_RDP(fin, fdb, fout, include.species = FALSE, compress = TRUE)
 }
 \description{
-## RDP Trainset 16
-path <- "~/Desktop/RDP/RDPClassifier_16S_trainsetNo16_rawtrainingdata"
-dada2:::makeTaxonomyFasta_RDP(file.path(path, "trainset16_022016.fa"), 
-    file.path(path, "trainset16_db_taxid.txt"), 
-    "~/tax/rdp_train_set_16.fa.gz")
+## RDP Trainset 19
+path <- "~/tax/rdp/v19"
+dada2:::makeTaxonomyFasta_RDP(file.path(path, "trainset19_072023_speciesrank.fa"), 
+                              file.path(path, "trainset19_db_taxid.txt"), 
+                              "~/Desktop/rdp_19_toGenus_trainset.fa.gz", include.species=FALSE,
+                              compress=TRUE)
+dada2:::tax.check("~/Desktop/rdp_19_toGenus_trainset.fa.gz")
+}
+\details{
+dada2:::makeTaxonomyFasta_RDP(file.path(path, "trainset19_072023_speciesrank.fa"), 
+                              file.path(path, "trainset19_db_taxid.txt"), 
+                              "~/Desktop/rdp_19_toSpecies_trainset.fa.gz", include.species=TRUE,
+                              compress=TRUE)
+dada2:::tax.check("~/Desktop/rdp_19_toSpecies_trainset.fa.gz")
 }
 \keyword{internal}

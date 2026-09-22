@@ -23,7 +23,7 @@ bool C_is_bimera(std::string sq, std::vector<std::string> pars, bool allow_one_o
   bool rval = false;
   
   for(i=0;i<pars.size() && rval==false;i++) {
-    al = nwalign_vectorized2(sq.c_str(), pars[i].c_str(), (int16_t) match, (int16_t) mismatch, (int16_t) gap_p, 0, max_shift);  // Remember, alignments must be freed!
+    al = nwalign_vectorized2(sq.c_str(), sq.length(), pars[i].c_str(), pars[i].length(), (int16_t) match, (int16_t) mismatch, (int16_t) gap_p, 0, max_shift);  // Remember, alignments must be freed!
     get_lr(al, left, right, left_oo, right_oo, allow_one_off, max_shift);
     
     if((left+right) >= sq.size()) { // Toss id/pure-shift/internal-indel "parents"
@@ -119,7 +119,7 @@ struct BimeraTableParallel : public RcppParallel::Worker
         for(k=0;k<ncol;k++) { // Compare with all possible parents
           if(vals[i+k*nrow]>(min_fold*vals[i+j*nrow]) && vals[i+k*nrow]>=min_abund) {
             if(lefts[k]<0) { // Comparison not yet done to this potential parent
-              al = nwalign_vectorized2(seqs[j].c_str(), seqs[k].c_str(), (int16_t) match, (int16_t) mismatch, (int16_t) gap_p, 0, max_shift);  // Remember, alignments must be freed!
+              al = nwalign_vectorized2(seqs[j].c_str(), seqs[j].length(), seqs[k].c_str(), seqs[k].length(), (int16_t) match, (int16_t) mismatch, (int16_t) gap_p, 0, max_shift);  // Remember, alignments must be freed!
               get_lr(al, left, right, left_oo, right_oo, allow_one_off, max_shift);
               if(allow_one_off && get_ham_endsfree(al[0], al[1]) >= min_one_off_par_dist) {
                 allowed[k]=true;
@@ -177,7 +177,6 @@ struct BimeraTableParallel : public RcppParallel::Worker
 
 // [[Rcpp::export]]
 Rcpp::DataFrame C_table_bimera2(Rcpp::IntegerMatrix mat, std::vector<std::string> seqs, double min_fold, int min_abund, bool allow_one_off, int min_one_off_par_dist, int match, int mismatch, int gap_p, int max_shift) {
-  int nrow = mat.nrow();
   int ncol = mat.ncol();
   // matrix stored in "column-major" order (so 1st col, then 2nd col...)
   // mat(i,j) --> vals[i+j*nrow]
