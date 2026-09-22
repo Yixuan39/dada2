@@ -12,24 +12,16 @@ if(compareVersion(R_version, R_min_version) < 0){
   message("R version looks okay:\n", R.version$major, ".", R.version$minor)
 }
 ################################################################################
-# Make sure devtools is installed...
+# Make sure BiocManager is installed (replaces the retired biocLite()).
 ################################################################################
-if(!require("devtools")){
-  install.packages("devtools")
-}
-if(
-  compareVersion(a = as.character(packageVersion("devtools")),
-                 b = "1.13.2") < 0
-){
-  message("\nUpdating devtools package to latest release version...\n")
-  install.packages("devtools")
+if(!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")
 }
 ################################################################################
 # Install basic required packages if not available/installed.
 ################################################################################
 install_missing_packages = function(pkg, version = NULL, verbose = TRUE){
   availpacks = .packages(all.available = TRUE)
-  source("http://bioconductor.org/biocLite.R")
   missingPackage = FALSE
   if(!any(pkg %in% availpacks)){
     if(verbose){
@@ -44,8 +36,8 @@ install_missing_packages = function(pkg, version = NULL, verbose = TRUE){
     if( compareVersion(a = as.character(packageVersion(pkg)),
                        b = version) < 0 ){
       if(verbose){
-        message("Current version of package\n", 
-                pkg, "\t", 
+        message("Current version of package\n",
+                pkg, "\t",
                 packageVersion(pkg), "\n",
                 "is less than required.
                 Update will be attempted.")
@@ -54,20 +46,9 @@ install_missing_packages = function(pkg, version = NULL, verbose = TRUE){
     }
   }
   if(missingPackage){
-    biocLite(pkg, suppressUpdates = TRUE)
+    BiocManager::install(pkg, update = FALSE, ask = FALSE)
   }
 }
-################################################################################
-# Special snapshot version of shinyFiles = "0.6.3"
-################################################################################
-if(
-  compareVersion(a = as.character(packageVersion("shinyFiles")),
-                 b = "0.6.3") < 0
-){
-  message("\nAttempting to update/install shinyFiles package from joey711/shinyFiles on GitHub...\n")
-  devtools::install_github("joey711/shinyFiles")
-}
-
 ################################################################################
 # Define list of package names and required versions.
 ################################################################################

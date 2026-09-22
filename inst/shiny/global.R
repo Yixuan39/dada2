@@ -153,8 +153,8 @@ plot_quality_by_cycle = function(CycleStats, CycleCounts, TrimTable = NULL){
       space = "white",
       na.value = "white",
       guide = "colourbar") +
-    geom_path(size = 0.25) +
-    geom_path(mapping = aes(y = Smooth), size = 1, alpha = 0.35) +
+    geom_path(linewidth = 0.25) +
+    geom_path(mapping = aes(y = Smooth), linewidth = 1, alpha = 0.35) +
     geom_text(mapping = aes(label = Cycle,
                             y = 1,
                             hjust = ifelse(Side == "Right", yes = 1.1, no = -0.1)),
@@ -163,7 +163,7 @@ plot_quality_by_cycle = function(CycleStats, CycleCounts, TrimTable = NULL){
               color = "black", size = 3) +
     facet_wrap(~Direction, nrow = 2)
   if( !is.null(TrimTable) ){
-    p <- p + geom_vline(mapping = aes(xintercept = Cycle), data = TrimTable, size = 0.25)
+    p <- p + geom_vline(mapping = aes(xintercept = Cycle), data = TrimTable, linewidth = 0.25)
   }
   return(p)
 }
